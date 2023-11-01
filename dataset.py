@@ -44,7 +44,7 @@ def compute_mel(y):
     spc = np.abs(x_stft).T  # (#frames, #bins)
 
     # get mel basis
-    mel_basis = librosa.filters.mel(sample_rate, fft_size, num_mels, fmin, fmax)
+    mel_basis = librosa.filters.mel(sr=sample_rate, n_fft=fft_size, n_mels=num_mels, fmin=fmin, fmax=fmax)
     mel = np.maximum(eps, np.dot(spc, mel_basis.T))
 
 
@@ -76,8 +76,9 @@ class NSCDataset(Dataset):
         for cur_dir in os.listdir(audio_dir):
             singer_name = cur_dir
             cur_singer_dir = os.path.join(audio_dir, cur_dir)
-
-            cur_mel_list = []
+            
+            if not os.path.isdir(cur_singer_dir):
+                continue
 
             print (cur_singer_dir)
             for audio_name in tqdm(os.listdir(cur_singer_dir)):
@@ -87,9 +88,9 @@ class NSCDataset(Dataset):
                 voc, sr = librosa.core.load(audio_path, sr=None, mono=True)
 
                 if sr != 24000:
-                    voc = librosa.resample(voc, sr, 24000)
+                    voc = librosa.resample(voc, orig_sr=sr, target_sr=24000)
 
-                voc = librosa.util.normalize(voc) * 0.9
+                voc = librosa.util.normalize(voc) * 0.9 # why * 0.9
                 voc_mel, voc_spc = compute_mel(voc)
                 # print (voc_mel.shape)
                 sample_size = 80

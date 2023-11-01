@@ -5,6 +5,7 @@ import librosa
 import argparse
 import time
 import math
+import logging
 
 import torch
 import torch.nn as nn
@@ -284,7 +285,7 @@ class Codec(nn.Module):
         ds_x1, x1 = self.res_encoder_block1(x)
         x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2))
         x1_quantized = x1_quantized.transpose(1, 2)
-        x1_quantize_residual = x1 - x1_quantized
+        x1_quantize_residual = x1 - x1_quantized # send the x1 - x1_q to the input of next encoder
 
         ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual)
         x2_quantized, x2_indices, x2_commit_loss = self.vq2(ds_x2.transpose(1, 2))
