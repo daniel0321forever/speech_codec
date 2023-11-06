@@ -1,5 +1,8 @@
 VCTK-Corpus-0.92/
 test_data/
 train_data/
+other_data/
+models/codec_mel_spec/
 train_spc.pkl
+test_spc.pkl
 __pycache__/
