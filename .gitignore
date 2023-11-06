@@ -1,3 +1,5 @@
-wav48_silence_trimmed/
 VCTK-Corpus-0.92/
-txt/
+test_data/
+train_data/
+train_spc.pkl
+__pycache__/

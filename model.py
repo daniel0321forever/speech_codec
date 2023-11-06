@@ -76,13 +76,19 @@ class PWGVocoder(nn.Module):
         # Pick at most "self.max_vocoder_segment_length" frames, in order to avoid CUDA OOM.
         # x is the random noise for vocoder
         if spec_output_norm.shape[1] > self.max_vocoder_segment_length and output_all == False:
+            # 取「結尾減去max_length長度」之時間點之前的一點作為開始
             start_frame = int(torch.rand(1) * (spec_output_norm.shape[1] - self.max_vocoder_segment_length))
+            # 取該時間點之後加上max_length作為終點
             end_frame = start_frame + self.max_vocoder_segment_length
-            spec_for_vocoder = torch.nn.ReplicationPad1d(2)(spec_output_norm[:,start_frame:end_frame,:].transpose(1, 2))
+            # Pads the input tensor using replication of the input boundary.
+            spec_for_vocoder = torch.nn.ReplicationPad1d(2)(spec_output_norm[:,start_frame:end_frame,:].transpose(1, 2)) # time is the last dimension
+            # x is the random noise for vocoder [spec output shape 0, 1, trimmed spec output shape 1 * unsample factor]
             x = torch.randn(spec_output_norm.shape[0], 1, self.max_vocoder_segment_length * self.vocoder.upsample_factor).to(self.device)
         else:
             start_frame = 0
+            # Pads the input tensor using replication of the input boundary.
             spec_for_vocoder = torch.nn.ReplicationPad1d(2)(spec_output_norm.transpose(1, 2))
+            # x is the random noise for vocoder
             x = torch.randn(spec_output_norm.shape[0], 1, spec_output_norm.shape[1] * self.vocoder.upsample_factor).to(self.device)
         
         # print (x.shape, spec_output_norm.transpose(1, 2).shape)
@@ -111,7 +117,7 @@ class MelResCodec(nn.Module):
                         dim = self.latent_dim,
                         codebook_size = 256,     
                         decay = 0.99,      
-                        commitment = 1.
+                        commitment_weight = 1.
                     )
         
         self.res_decoder_block = ResBlock(self.latent_dim)
@@ -160,11 +166,13 @@ class ResBlock(nn.Module):
 
         self.output_linear = nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1)
 
+        # downsample by using stride = 2 convolution once
         if self.temp_downsample_rate == 2:
             self.ds = nn.Sequential(
                 nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
+        # downsample by using stride = 2 convolution twice
         elif self.temp_downsample_rate == 4:
             self.ds = nn.Sequential(
                 nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
@@ -173,6 +181,11 @@ class ResBlock(nn.Module):
             )
 
     def forward(self, x):
+        """
+        x -> res_1 -> res_2 -> output_linear -> downsample -> repeat downsample element
+        
+        """
+
         out = self.res1(x)
         x = x + out
 
@@ -181,6 +194,7 @@ class ResBlock(nn.Module):
 
         x = self.output_linear(x)
 
+        # repeat the downsampled elements so that the length is the same
         if self.temp_downsample_rate == 2:
             ds_x = self.ds(x)
             ds_x = torch.repeat_interleave(ds_x, 2, dim=2)
@@ -221,21 +235,21 @@ class Codec(nn.Module):
                         dim = self.latent_dim,
                         codebook_size = 256,     
                         decay = 0.99,      
-                        commitment = 1.
+                        commitment_weight = 1.
                     )
 
         self.vq2 = VectorQuantize(
                         dim = self.latent_dim,
                         codebook_size = 256,     
                         decay = 0.99,      
-                        commitment = 1.
+                        commitment_weight = 1.
                     )
 
         self.vq3 = VectorQuantize(
                         dim = self.latent_dim,
                         codebook_size = 256,     
                         decay = 0.99,      
-                        commitment = 1.
+                        commitment_weight = 1.
                     )
         
         self.res_decoder_block1 = ResBlock(self.latent_dim)
