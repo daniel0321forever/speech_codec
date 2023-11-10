@@ -1,7 +1,13 @@
 # dataset
 VCTK-Corpus-0.92/
-test_data/fullset/
-train_data/fullset
-models/codec_mel_spec/
 train_spc.pkl
 test_spc.pkl
+dataset/
+raw_data/
+raw_data/
+
+# model
+models/
+
+# scripts
+script_d.sh
