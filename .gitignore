@@ -4,7 +4,6 @@ train_spc.pkl
 test_spc.pkl
 dataset/
 raw_data/
-raw_data/
 
 # model
 models/
