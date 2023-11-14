@@ -25,6 +25,7 @@ def inference(model, source_mel, device, use_griffim_lim=False, vocoder=None):
     sample_size = 200
     source_mel_segments = []
 
+    print("source_mel", source_mel.shape)
     for i in range(0, len(source_mel), sample_size):
         start = i
         end = min(i+sample_size, len(source_mel))
@@ -36,6 +37,8 @@ def inference(model, source_mel, device, use_griffim_lim=False, vocoder=None):
                 # print (cur_data.shape)
                 # cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=-10.0))
                 cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+            
+            print(cur_data.shape)
             source_mel_segments.append(cur_data)
             
     pred_list_vq1 = []
@@ -98,20 +101,28 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint, strict=True)
     print("---Model Restored---", model_path, "\n")
     
-    vocoder = PWGVocoder(device=device, normalize_path='train_nodev_all_vctk_parallel_wavegan.v1/stats.h5'
-        , vocoder_path='train_nodev_all_vctk_parallel_wavegan.v1/checkpoint-400000steps.pkl').to(device)
+    # vocoder = PWGVocoder(device=device, normalize_path='train_nodev_all_vctk_parallel_wavegan.v1/stats.h5'
+    #     , vocoder_path='train_nodev_all_vctk_parallel_wavegan.v1/checkpoint-400000steps.pkl').to(device)
 
     model.eval()
 
-    output_wav1, output_wav2, output_wav3 = inference(model, source_spc, device, use_griffim_lim=False, vocoder=vocoder)
+    use_griffim_lim = True
+    output_wav1, output_wav2, output_wav3 = inference(model, source_mel_feature, device, use_griffim_lim=use_griffim_lim)
+    print("get inference")
     wavfile.write(output_prefix + '_vq1.wav', 24000, output_wav1)
     wavfile.write(output_prefix + '_vq2.wav', 24000, output_wav2)
     wavfile.write(output_prefix + '_vq3.wav', 24000, output_wav3)
     wavfile.write(output_prefix + '_norm.wav', 24000, source_y)
 
-    vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
-    vocoder_baseline_output, _ = vocoder(vocoder_baseline_input, output_all=True)
-    vocoder_baseline_output = vocoder_baseline_output[0].cpu().numpy()
+    if use_griffim_lim:
+        vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
+        vocoder_baseline_output = librosa.griffinlim(torch.exp(vocoder_baseline_input).squeeze(0).cpu().numpy().T, n_iter=32, hop_length=300)
+        vocoder_baseline_output = vocoder_baseline_output
+
+    else:
+        vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
+        vocoder_baseline_output, _ = vocoder(vocoder_baseline_input, output_all=True)
+        vocoder_baseline_output = vocoder_baseline_output[0].cpu().numpy()
 
     # vocoder_baseline_output = librosa.griffinlim(source_spc.T, n_iter=32, hop_length=300)
     wavfile.write(output_prefix + '_vocoder.wav', 24000, vocoder_baseline_output)

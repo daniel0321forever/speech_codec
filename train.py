@@ -45,7 +45,10 @@ if __name__ == "__main__":
     torch.multiprocessing.set_sharing_strategy('file_system')
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
-    device = torch.device('cuda'if torch.cuda.is_available()else 'cpu')
+
+    device = torch.device('cuda' if torch.cuda.is_available()else 'cpu')
+    
+    print(f"Current device: {device}")
     
     model_dir = 'models/codec_mel_spec'
     if not os.path.exists(model_dir):
@@ -68,10 +71,10 @@ if __name__ == "__main__":
                                   betas=(0.9, 0.999),
                                   eps=1e-9)
 
-    with open('train_spc.pkl', 'rb') as f:
+    with open('dataset/train_spc.pkl', 'rb') as f:
         train_dataset = pickle.load(f)
 
-    with open('test_spc.pkl', 'rb') as f:
+    with open('dataset/test_spc.pkl', 'rb') as f:
         test_dataset = pickle.load(f)
 
     print ("Number of training sample:", len(train_dataset))
