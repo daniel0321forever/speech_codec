@@ -180,10 +180,10 @@ class ResBlock(nn.Module):
                 nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
+    
     def forward(self, x):
         """
         x -> res_1 -> res_2 -> output_linear -> downsample -> repeat downsample element
-        
         """
 
         out = self.res1(x)
@@ -264,7 +264,7 @@ class Codec(nn.Module):
                 nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.input_dim, 1, stride=1, padding=0, dilation=1)
             )
-
+    
     def encode(self, x):
         # transmit the compressed values (code book index of each input vector) to decoder
         # transmit the quantized tensor (decoded tensor) to the next level
@@ -313,11 +313,13 @@ class Codec(nn.Module):
         # decode x1
         x1_decoded = self.res_decoder_block3(x1_quantized)
 
-        # decode x2
+        # decode x2:
+        #   decode x2_quantized (residual of x1) -> decode (x2_decoded + x1_quantized)
         x2_decoded = self.res_decoder_block2(x2_quantized)
         x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
 
-        # decode x3
+        # decode x3 (The flow written in the report)
+        #   decode x3_quantized -> decode x3_decoded + x2_quantized -> decode x3x2_decoded + x1_quantized
         x3_decoded = self.res_decoder_block1(x3_quantized)
         x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized)
         x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized)

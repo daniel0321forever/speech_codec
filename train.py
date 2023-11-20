@@ -101,7 +101,7 @@ if __name__ == "__main__":
         use_linear_batch = 0
         for i, batchs in tqdm(enumerate(training_loader)):
 
-            model_input = batchs[0].to(device)
+            model_input = batchs[0].to(device) # take only the mel-cepstrum
 
             model_output_list, commit_loss_list = model(model_input)
 
@@ -128,6 +128,7 @@ if __name__ == "__main__":
 
             t_l.backward()
 
+            # gradient = gradient * coeff (< 1)
             nn.utils.clip_grad_norm_(
                     model.parameters(), 1.0)
 

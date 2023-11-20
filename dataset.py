@@ -43,7 +43,7 @@ def compute_mel(y):
     )
     spc = np.abs(x_stft).T  # (#frames, #bins)
 
-    # get mel basis
+    # get mel basis -> project the freq at each time frame onto the mel basis (not log yet)
     mel_basis = librosa.filters.mel(sr=sample_rate, n_fft=fft_size, n_mels=num_mels, fmin=fmin, fmax=fmax)
     mel = np.maximum(eps, np.dot(spc, mel_basis.T))
 
@@ -56,6 +56,7 @@ def compute_mel(y):
         center=True,
         pad_mode="reflect",
     )
+    # just spectrum, no mel cepstrum
     spc_supp = np.abs(x_stft_supp).T
 
     # Get log spec
@@ -64,6 +65,21 @@ def compute_mel(y):
     # print (mel.shape)
     return np.log10(mel), spc_supp
 
+def compute_pitch(y):
+    sr = 24000
+    pitch, mag = librosa.piptrack(
+        y, sr, 
+        n_fft=fft_size, 
+        hop_length=hop_length,
+        win_length=win_length,
+        center=True,
+        pad_mode="reflect",
+    )
+
+    pitch = pitch.T
+    mag = mag.T
+
+    return pitch, mag
 
 class NSCDataset(Dataset):
 
@@ -71,6 +87,8 @@ class NSCDataset(Dataset):
         self.singer_name_list = []
         self.mel_spec_list = []
         self.linear_spc_list = []
+        self.pitch_list = []
+        self.mag_list = []
 
     def add_data(self, audio_dir):
         for cur_dir in os.listdir(audio_dir):
@@ -90,9 +108,15 @@ class NSCDataset(Dataset):
                 if sr != 24000:
                     voc = librosa.resample(voc, orig_sr=sr, target_sr=24000)
 
+                
                 voc = librosa.util.normalize(voc) * 0.9 # why * 0.9
+                
                 voc_mel, voc_spc = compute_mel(voc)
-                # print (voc_mel.shape)
+                voc_pitch, voc_mag = compute_pitch(voc)
+
+                print ("voc_mel", voc_mel.shape, "voc_spc", voc_spc.shape)
+                print("voc_pitch", voc_pitch.shape, "voc_mag", voc_mag.shape)
+                
                 sample_size = 80
 
                 for i in range(0, len(voc_mel), sample_size):
@@ -102,15 +126,22 @@ class NSCDataset(Dataset):
 
                     cur_data = np.array(voc_mel[start:end])
                     cur_spc = np.array(voc_spc[start:end])
+                    cur_pitch = np.array(voc_pitch[start:end])
+                    cur_mag = np.array(voc_mag[start:end])
 
                     if end - start < sample_size:
                         padding_length = sample_size - (end - start)
                         # print (cur_data.shape)
                         cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=-10.0))
                         cur_spc = np.array(np.pad(cur_spc, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+                        cur_pitch = np.array(np.pad(cur_pitch, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+                        cur_mag = np.array(np.pad(cur_mag, pad_width=((0, padding_length), (0, 0)), constant_values=0))
                         # print (cur_data.shape)
+
                     self.mel_spec_list.append(cur_data)
                     self.linear_spc_list.append(cur_spc)
+                    self.pitch_list.append(cur_pitch)
+                    self.mag_list.append(cur_mag)
                     self.singer_name_list.append(singer_name)
 
     def __len__(self):
@@ -118,19 +149,27 @@ class NSCDataset(Dataset):
 
     def __getitem__(self, idx):
         # print (self.mel_spec_list[idx].shape)
-        return (self.mel_spec_list[idx], self.linear_spc_list[idx])
+        return (self.mel_spec_list[idx], self.linear_spc_list[idx], self.pitch_list[idx], self.mag_list[idx])
 
 if __name__ == "__main__":
-    dataset_dir = sys.argv[1]
-    output_path = sys.argv[2]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--datadir', required=False, default="raw_data_sample/train/wav48_silence_trimmed", type=str)
+    parser.add_argument('-o', '--output', required=False, default="_dataset", type=str)
+    
+    args = parser.parse_args()
+    dataset_dir = args.datadir
+    output_path = args.output
+
+    print(dataset_dir)
+    print(output_path)
 
     cur_dataset = NSCDataset()
     cur_dataset.add_data(dataset_dir)
     # cur_dataset.add_data(dataset_dir[1])
 
-    with open(output_path, 'wb') as f:
-        pickle.dump(cur_dataset, f)
+    # with open(output_path, 'wb') as f:
+    #     pickle.dump(cur_dataset, f)
 
-    print (len(cur_dataset))
-    print (cur_dataset[0])
-    print (cur_dataset[0][0].shape, cur_dataset[0][1].shape)
+    # print (len(cur_dataset))
+    # print (cur_dataset[0])
+    # print (cur_dataset[0][0].shape, cur_dataset[0][1].shape) # mel_spec, linear_spc
