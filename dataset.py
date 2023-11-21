@@ -167,9 +167,9 @@ if __name__ == "__main__":
     cur_dataset.add_data(dataset_dir)
     # cur_dataset.add_data(dataset_dir[1])
 
-    # with open(output_path, 'wb') as f:
-    #     pickle.dump(cur_dataset, f)
+    with open(output_path, 'wb') as f:
+        pickle.dump(cur_dataset, f)
 
-    # print (len(cur_dataset))
-    # print (cur_dataset[0])
-    # print (cur_dataset[0][0].shape, cur_dataset[0][1].shape) # mel_spec, linear_spc
+    print (len(cur_dataset))
+    print (cur_dataset[0])
+    print (cur_dataset[0][0].shape, cur_dataset[0][1].shape) # mel_spec, linear_spc
