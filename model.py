@@ -255,6 +255,12 @@ class Codec(nn.Module):
         self.res_decoder_block1 = ResBlock(self.latent_dim)
         self.res_decoder_block2 = ResBlock(self.latent_dim)
         self.res_decoder_block3 = ResBlock(self.latent_dim)
+        self.fully_connected = nn.Sequential(
+            nn.Linear(self.latent_dim + 2, self.latent_dim),
+            nn.LeakyReLU(),
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LeakyReLU(),
+        )
         self.decoder_linear = nn.Sequential(
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -290,7 +296,7 @@ class Codec(nn.Module):
 
         return x1_indices, x2_indices, x3_indices
 
-    def forward(self, x):
+    def forward(self, x, pitch, mag):
 
         x = x.contiguous().transpose(1, 2)
         x = self.encoder_linear(x)
@@ -312,17 +318,21 @@ class Codec(nn.Module):
 
         # decode x1
         x1_decoded = self.res_decoder_block3(x1_quantized)
+        x1_decoded = torch.concat([x1_decoded, pitch, mag], dim=2)
+        x1_decoded = self.fully_connected(x1_decoded)
 
         # decode x2:
         #   decode x2_quantized (residual of x1) -> decode (x2_decoded + x1_quantized)
         x2_decoded = self.res_decoder_block2(x2_quantized)
         x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
+        x2_decoded = torch.concat([x2_decoded, pitch, mag], dim=2)
 
         # decode x3 (The flow written in the report)
         #   decode x3_quantized -> decode x3_decoded + x2_quantized -> decode x3x2_decoded + x1_quantized
         x3_decoded = self.res_decoder_block1(x3_quantized)
         x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized)
         x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized)
+        x3_decoded = self.fully_connected([x3_decoded, pitch, mag], dim=2)
         
 
         x1_decoded_output = self.decoder_linear(x1_decoded)

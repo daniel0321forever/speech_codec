@@ -71,6 +71,8 @@ def compute_pitch(y):
         y=y, 
         sr=sr, 
         n_fft=fft_size, 
+        fmin=fmin,
+        fmax=fmax,
         hop_length=hop_length,
         win_length=win_length,
         center=True,
@@ -99,6 +101,7 @@ class NSCDataset(Dataset):
             if not os.path.isdir(cur_singer_dir):
                 continue
 
+            print(singer_name)
             # print (cur_singer_dir)
             for audio_name in tqdm(os.listdir(cur_singer_dir)):
                 audio_path = os.path.join(audio_dir, cur_dir, audio_name)
@@ -118,7 +121,7 @@ class NSCDataset(Dataset):
                 # print ("voc_mel", voc_mel.shape, "voc_spc", voc_spc.shape)
                 # print("voc_pitch", voc_pitch.shape, "voc_mag", voc_mag.shape)
 
-                max_mag_idx = np.argmax(voc_mag, axis=1)
+                max_mag_idx = np.argmax(voc_mag, axis=1)    
                 
                 voc_pitch = np.array([[voc_pitch[frame][max_mag_idx[frame]]] for frame in range(len(voc_pitch))])
                 voc_mag = np.array([[voc_mag[frame][max_mag_idx[frame]]] for frame in range(len(voc_mag))])
