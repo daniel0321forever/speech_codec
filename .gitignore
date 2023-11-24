@@ -10,3 +10,4 @@ models/
 
 # scripts
 script_d.sh
+dataset_prep*
