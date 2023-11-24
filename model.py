@@ -145,9 +145,10 @@ class MelResCodec(nn.Module):
 class ResBlock(nn.Module):
     ''' A two-feed-forward-layer module with no transpose (should be performed beforehand) '''
 
-    def __init__(self, latent_dim, temp_downsample_rate=1):
+    def __init__(self, latent_dim, output_dim, temp_downsample_rate=1):
         super(ResBlock, self).__init__()
         self.latent_dim = latent_dim
+        self.output_dim = output_dim
         self.kernel_size = 3
         self.padding = (self.kernel_size - 1) // 2
         self.temp_downsample_rate = temp_downsample_rate
@@ -164,20 +165,20 @@ class ResBlock(nn.Module):
             nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
         )
 
-        self.output_linear = nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1)
+        self.output_linear = nn.Conv1d(self.latent_dim, self.output_dim, 1, stride=1, padding=0, dilation=1)
 
         # downsample by using stride = 2 convolution once
         if self.temp_downsample_rate == 2:
             self.ds = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
+                nn.Conv1d(self.output_dim, self.output_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
         # downsample by using stride = 2 convolution twice
         elif self.temp_downsample_rate == 4:
             self.ds = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
+                nn.Conv1d(self.output_dim, self.output_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
                 nn.LeakyReLU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
+                nn.Conv1d(self.output_dim, self.output_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
     
@@ -216,6 +217,7 @@ class Codec(nn.Module):
         # self.input_dim = 513
         self.input_dim = 80
         self.latent_dim = 256
+        self.freq_dim = 80
 
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
@@ -227,9 +229,9 @@ class Codec(nn.Module):
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
             )
 
-        self.res_encoder_block1 = ResBlock(self.latent_dim, temp_downsample_rate=4)
-        self.res_encoder_block2 = ResBlock(self.latent_dim, temp_downsample_rate=2)
-        self.res_encoder_block3 = ResBlock(self.latent_dim)
+        self.res_encoder_block1 = ResBlock(self.latent_dim, self.latent_dim, temp_downsample_rate=4)
+        self.res_encoder_block2 = ResBlock(self.latent_dim, self.latent_dim, temp_downsample_rate=2)
+        self.res_encoder_block3 = ResBlock(self.latent_dim, self.latent_dim)
 
         self.vq1 = VectorQuantize(
                         dim = self.latent_dim,
@@ -252,9 +254,11 @@ class Codec(nn.Module):
                         commitment_weight = 1.
                     )
         
-        self.res_decoder_block1 = ResBlock(self.latent_dim)
-        self.res_decoder_block2 = ResBlock(self.latent_dim)
-        self.res_decoder_block3 = ResBlock(self.latent_dim)
+        # TODO: Figure out the dimension
+        self.res_decoder_block1 = ResBlock(self.latent_dim, self.input_dim)
+        self.res_decoder_block2 = ResBlock(self.latent_dim, self.input_dim)
+        self.res_decoder_block3 = ResBlock(self.latent_dim, self.input_dim)
+
         self.fully_connected = nn.Sequential(
             nn.Linear(self.latent_dim + 2, self.latent_dim),
             nn.LeakyReLU(),
