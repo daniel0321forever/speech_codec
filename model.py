@@ -148,7 +148,6 @@ class ResBlock(nn.Module):
     def __init__(self, latent_dim, output_dim, temp_downsample_rate=1):
         super(ResBlock, self).__init__()
         self.latent_dim = latent_dim
-        self.output_dim = output_dim
         self.kernel_size = 3
         self.padding = (self.kernel_size - 1) // 2
         self.temp_downsample_rate = temp_downsample_rate
@@ -165,20 +164,20 @@ class ResBlock(nn.Module):
             nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
         )
 
-        self.output_linear = nn.Conv1d(self.latent_dim, self.output_dim, 1, stride=1, padding=0, dilation=1)
+        self.output_linear = nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1)
 
         # downsample by using stride = 2 convolution once
         if self.temp_downsample_rate == 2:
             self.ds = nn.Sequential(
-                nn.Conv1d(self.output_dim, self.output_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
+                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
         # downsample by using stride = 2 convolution twice
         elif self.temp_downsample_rate == 4:
             self.ds = nn.Sequential(
-                nn.Conv1d(self.output_dim, self.output_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
+                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
                 nn.LeakyReLU(),
-                nn.Conv1d(self.output_dim, self.output_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
+                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
     
@@ -215,9 +214,9 @@ class Codec(nn.Module):
         
         self.device = device
         # self.input_dim = 513
-        self.input_dim = 80
+        self.input_dim = 80 # Yeah, it is the frequencies dimension
         self.latent_dim = 256
-        self.freq_dim = 80
+        self.frames = 80
 
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
@@ -229,9 +228,9 @@ class Codec(nn.Module):
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
             )
 
-        self.res_encoder_block1 = ResBlock(self.latent_dim, self.latent_dim, temp_downsample_rate=4)
-        self.res_encoder_block2 = ResBlock(self.latent_dim, self.latent_dim, temp_downsample_rate=2)
-        self.res_encoder_block3 = ResBlock(self.latent_dim, self.latent_dim)
+        self.res_encoder_block1 = ResBlock(self.latent_dim, temp_downsample_rate=4)
+        self.res_encoder_block2 = ResBlock(self.latent_dim, temp_downsample_rate=2)
+        self.res_encoder_block3 = ResBlock(self.latent_dim)
 
         self.vq1 = VectorQuantize(
                         dim = self.latent_dim,
@@ -254,17 +253,36 @@ class Codec(nn.Module):
                         commitment_weight = 1.
                     )
         
-        # TODO: Figure out the dimension
-        self.res_decoder_block1 = ResBlock(self.latent_dim, self.input_dim)
-        self.res_decoder_block2 = ResBlock(self.latent_dim, self.input_dim)
-        self.res_decoder_block3 = ResBlock(self.latent_dim, self.input_dim)
+        self.res_decoder_block1 = ResBlock(self.latent_dim)
+        self.res_decoder_block2 = ResBlock(self.latent_dim)
+        self.res_decoder_block3 = ResBlock(self.latent_dim)
 
-        self.fully_connected = nn.Sequential(
+        # (1, 80) -> (128, 80)
+        self.pitch_decoder = nn.Sequential(
+            nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1),
+            nn.LeakyReLU(),
+            nn.Conv1d(1, 1, stride=1, padding=1, dilation=1)
+        )
+
+        self.fully_connected1 = nn.Sequential(
             nn.Linear(self.latent_dim + 2, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
         )
+        self.fully_connected2 = nn.Sequential(
+            nn.Linear(self.latent_dim + 2, self.latent_dim),
+            nn.LeakyReLU(),
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LeakyReLU(),
+        )
+        self.fully_connected3 = nn.Sequential(
+            nn.Linear(self.latent_dim + 2, self.latent_dim),
+            nn.LeakyReLU(),
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LeakyReLU(),
+        )
+
         self.decoder_linear = nn.Sequential(
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -275,11 +293,11 @@ class Codec(nn.Module):
                 nn.Conv1d(self.latent_dim, self.input_dim, 1, stride=1, padding=0, dilation=1)
             )
     
-    def encode(self, x):
+    def encode(self, x, pitch, mag):
         # transmit the compressed values (code book index of each input vector) to decoder
         # transmit the quantized tensor (decoded tensor) to the next level
 
-        x = x.contiguous().transpose(1, 2)
+        x = x.contiguous().transpose(1, 2) # (freq, frames)
         x = self.encoder_linear(x)
 
         # First CNN + VQ compressor
@@ -298,16 +316,18 @@ class Codec(nn.Module):
         x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3.transpose(1, 2))
         x3_quantized = x3_quantized.transpose(1, 2)
 
-        return x1_indices, x2_indices, x3_indices
+        return x1_indices, x2_indices, x3_indices, pitch, mag
 
-    def forward(self, x, pitch, mag):
+    def forward(self, x: torch.Tensor, pitch: torch.Tensor, mag: torch.Tensor):
 
-        x = x.contiguous().transpose(1, 2)
+        x = x.contiguous().transpose(1, 2) # tranpose the input into (freq, times)
         x = self.encoder_linear(x)
 
         # First CNN + VQ compressor
         ds_x1, x1 = self.res_encoder_block1(x)
+        # transposed it back to (time, freq) and send the freq-vector of each frame into vq
         x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2))
+        # tranpose it to (freq, time) again for decoder (so that it could do conv1 on time series)
         x1_quantized = x1_quantized.transpose(1, 2)
         x1_quantize_residual = x1 - x1_quantized # send the x1 - x1_q to the input of next encoder
 
@@ -320,23 +340,29 @@ class Codec(nn.Module):
         x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3.transpose(1, 2))
         x3_quantized = x3_quantized.transpose(1, 2)
 
+        # decode pitch, mag
+        pitch = self.pitch_decoder(pitch.contiguous().transpose(1, 2)) # (1, 80)
+        mag = self.pitch_decoder(mag.contiguous().transpose(1, 2)) # (1, 80)
+        
         # decode x1
         x1_decoded = self.res_decoder_block3(x1_quantized)
-        x1_decoded = torch.concat([x1_decoded, pitch, mag], dim=2)
-        x1_decoded = self.fully_connected(x1_decoded)
+        x1_decoded = torch.concat([x1_decoded, pitch, mag], dim=1)
+        x1_decoded = self.fully_connected3(x1_decoded)
 
         # decode x2:
         #   decode x2_quantized (residual of x1) -> decode (x2_decoded + x1_quantized)
         x2_decoded = self.res_decoder_block2(x2_quantized)
         x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
-        x2_decoded = torch.concat([x2_decoded, pitch, mag], dim=2)
+        x2_decoded = torch.concat([x2_decoded, pitch, mag], dim=1)
+        x2_decoded = self.fully_connected2(x2_decoded)
 
         # decode x3 (The flow written in the report)
         #   decode x3_quantized -> decode x3_decoded + x2_quantized -> decode x3x2_decoded + x1_quantized
         x3_decoded = self.res_decoder_block1(x3_quantized)
         x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized)
         x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized)
-        x3_decoded = self.fully_connected([x3_decoded, pitch, mag], dim=2)
+        x3_decoded = torch.concat([x3_decoded, pitch, mag], dim=1)
+        x3_decoded = self.fully_connected1(x3_decoded)
         
 
         x1_decoded_output = self.decoder_linear(x1_decoded)
