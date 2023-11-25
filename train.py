@@ -102,6 +102,7 @@ if __name__ == "__main__":
 
     print ("Start training,", time.time())
     for epoch in range(100):
+        print(f"(epoch {epoch})")
         split_loss = np.zeros(6)
         use_linear_batch = 0
         for i, batchs in tqdm(enumerate(training_loader)):
