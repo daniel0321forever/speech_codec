@@ -33,8 +33,8 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
         
         if start + 1 < end:
             cur_data = np.array(source_mel[start:end])
-            cur_pitch = np.array(source_pitch)
-            cur_mag = np.array(source_mag)
+            cur_pitch = np.array(source_pitch[start:end])
+            cur_mag = np.array(source_mag[start:end])
 
             if end - start < sample_size:
                 padding_length = sample_size - (end - start)
@@ -44,7 +44,7 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
                 cur_pitch = np.array(np.pad(cur_pitch, pad_width=((0, padding_length), (0, 0)), constant_values=0))
                 cur_mag = np.array(np.pad(cur_mag, pad_width=((0, padding_length), (0, 0)), constant_values=0))
 
-            
+            print("cur shape")
             print(cur_data.shape, cur_pitch.shape, cur_mag.shape)
 
             source_mel_segments.append(cur_data)
@@ -84,8 +84,6 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
     output_wav2 = np.concatenate(pred_list_vq2, axis=0)
     output_wav3 = np.concatenate(pred_list_vq3, axis=0)
 
-    print (output_wav1.shape, output_wav2.shape, output_wav3.shape)
-
     return output_wav1, output_wav2, output_wav3
 
 from pesq import pesq
@@ -109,6 +107,7 @@ if __name__ == "__main__":
     source_pitch = np.array([[source_pitch[frame][max_mag_idx[frame]]] for frame in range(len(source_pitch))])
     source_mag = np.array([[source_mag[frame][max_mag_idx[frame]]] for frame in range(len(source_mag))])
     
+    print("source shape")
     print (source_y.shape, source_mel_feature.shape, source_pitch.shape)
 
     device = torch.device('cuda'if torch.cuda.is_available()else 'cpu')
@@ -128,6 +127,7 @@ if __name__ == "__main__":
 
     use_griffim_lim = False
     output_wav1, output_wav2, output_wav3 = inference(model, source_mel_feature, source_pitch, source_mag, device, use_griffim_lim=use_griffim_lim, vocoder=vocoder)
+
     print("get inference")
     wavfile.write(output_prefix + '_vq1.wav', 24000, output_wav1)
     wavfile.write(output_prefix + '_vq2.wav', 24000, output_wav2)
