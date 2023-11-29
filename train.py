@@ -15,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from model import Codec, PWGVocoder, MelResCodec
 from dataset import NSCDataset
+from utils import positional_encoding
 
 from torchaudio.transforms import Spectrogram
 # Since we need to normalize the loss

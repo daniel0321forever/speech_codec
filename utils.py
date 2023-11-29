@@ -1,14 +1,4 @@
 import torch
-from torch import nn, Tensor
-import math
-
-"""
-pitch input shape:
-
-(80, 1) -> (frames, pitch)
-
-encode the pitch at each frame into positional encoded vector
-"""
 
 def positional_encoding(pitch_array: torch.Tensor):
     seq_len = 4
@@ -31,10 +21,3 @@ def positional_encoding(pitch_array: torch.Tensor):
     pe = torch.tensor(pe)
 
     return pe
-
-tensor = torch.tensor(
-    [[0], [1], [2], [3]]
-)
-
-print(positional_encoding(tensor))
-
