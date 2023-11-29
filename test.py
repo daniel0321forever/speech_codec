@@ -14,32 +14,42 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from model import Codec, PWGVocoder
-from dataset import NSCDataset, compute_mel
+from dataset import NSCDataset, compute_mel, compute_pitch
 from train import get_param_num
 
 frame_per_second = 200.0
 sample_rate = 24000
 
-def inference(model, source_mel, device, use_griffim_lim=False, vocoder=None):
+def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_lim=False, vocoder=None):
 
     sample_size = 200
     source_mel_segments = []
+    source_pitch_segments = []
+    source_mag_segments = []
 
-    print("source_mel", source_mel.shape)
     for i in range(0, len(source_mel), sample_size):
         start = i
         end = min(i+sample_size, len(source_mel))
         
         if start + 1 < end:
             cur_data = np.array(source_mel[start:end])
+            cur_pitch = np.array(source_pitch[start:end])
+            cur_mag = np.array(source_mag[start:end])
+
             if end - start < sample_size:
                 padding_length = sample_size - (end - start)
                 # print (cur_data.shape)
                 # cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=-10.0))
                 cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=0))
-            
-            print(cur_data.shape)
+                cur_pitch = np.array(np.pad(cur_pitch, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+                cur_mag = np.array(np.pad(cur_mag, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+
+            print("cur shape")
+            print(cur_data.shape, cur_pitch.shape, cur_mag.shape)
+
             source_mel_segments.append(cur_data)
+            source_pitch_segments.append(cur_pitch)
+            source_mag_segments.append(cur_mag)
             
     pred_list_vq1 = []
     pred_list_vq2 = []
@@ -48,8 +58,12 @@ def inference(model, source_mel, device, use_griffim_lim=False, vocoder=None):
     with torch.no_grad():
         for i in tqdm(range(len(source_mel_segments))):
             model_input = torch.tensor(source_mel_segments[i]).unsqueeze(0).to(device)
+            pitch_input = torch.tensor(source_pitch_segments[i]).unsqueeze(0).to(device)
+            mag_input = torch.tensor(source_mag_segments[i]).unsqueeze(0).to(device)
+            
             model_input = torch.log(model_input + 1e-10)
-            model_output_list, commit_loss_list = model(model_input)
+            
+            model_output_list, commit_loss_list = model(model_input, pitch_input, mag_input)
 
             if use_griffim_lim:
                 waveform_output_vq1 = librosa.griffinlim(torch.exp(model_output_list[0]).squeeze(0).cpu().numpy().T, n_iter=32, hop_length=300)
@@ -70,8 +84,6 @@ def inference(model, source_mel, device, use_griffim_lim=False, vocoder=None):
     output_wav2 = np.concatenate(pred_list_vq2, axis=0)
     output_wav3 = np.concatenate(pred_list_vq3, axis=0)
 
-    print (output_wav1.shape, output_wav2.shape, output_wav3.shape)
-
     return output_wav1, output_wav2, output_wav3
 
 from pesq import pesq
@@ -88,8 +100,15 @@ if __name__ == "__main__":
     source_y, sr = librosa.core.load(source_audio, sr=24000, mono=True)
     source_y = librosa.util.normalize(source_y) * 0.9
     source_mel_feature, source_spc = compute_mel(source_y)
+
+    # source pitch and mag
+    source_pitch, source_mag = compute_pitch(source_y)
+    max_mag_idx = np.argmax(source_mag, axis=1)    
+    source_pitch = np.array([[source_pitch[frame][max_mag_idx[frame]]] for frame in range(len(source_pitch))])
+    source_mag = np.array([[source_mag[frame][max_mag_idx[frame]]] for frame in range(len(source_mag))])
     
-    print (source_y.shape, source_mel_feature.shape)
+    print("source shape")
+    print (source_y.shape, source_mel_feature.shape, source_pitch.shape)
 
     device = torch.device('cuda'if torch.cuda.is_available()else 'cpu')
 
@@ -101,13 +120,14 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint, strict=True)
     print("---Model Restored---", model_path, "\n")
     
-    # vocoder = PWGVocoder(device=device, normalize_path='train_nodev_all_vctk_parallel_wavegan.v1/stats.h5'
-    #     , vocoder_path='train_nodev_all_vctk_parallel_wavegan.v1/checkpoint-400000steps.pkl').to(device)
+    vocoder = PWGVocoder(device=device, normalize_path='pwg/stats.h5'
+        , vocoder_path='pwg/checkpoint-400000steps.pkl').to(device)
 
     model.eval()
 
-    use_griffim_lim = True
-    output_wav1, output_wav2, output_wav3 = inference(model, source_mel_feature, device, use_griffim_lim=use_griffim_lim)
+    use_griffim_lim = False
+    output_wav1, output_wav2, output_wav3 = inference(model, source_mel_feature, source_pitch, source_mag, device, use_griffim_lim=use_griffim_lim, vocoder=vocoder)
+
     print("get inference")
     wavfile.write(output_prefix + '_vq1.wav', 24000, output_wav1)
     wavfile.write(output_prefix + '_vq2.wav', 24000, output_wav2)

@@ -185,4 +185,4 @@ if __name__ == "__main__":
     print("done")
     print (len(cur_dataset))
     print (cur_dataset[0])
-    print (cur_dataset[0][0].shape, cur_dataset[0][1].shape) # mel_spec, linear_spc
+    print (cur_dataset[0][0].shape, cur_dataset[0][1].shape, cur_dataset[0][2].shape, cur_dataset[0][3].shape) # mel_spec, linear_spc

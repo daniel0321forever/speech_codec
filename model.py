@@ -145,7 +145,7 @@ class MelResCodec(nn.Module):
 class ResBlock(nn.Module):
     ''' A two-feed-forward-layer module with no transpose (should be performed beforehand) '''
 
-    def __init__(self, latent_dim, output_dim, temp_downsample_rate=1):
+    def __init__(self, latent_dim, temp_downsample_rate=1):
         super(ResBlock, self).__init__()
         self.latent_dim = latent_dim
         self.kernel_size = 3
@@ -261,7 +261,7 @@ class Codec(nn.Module):
         self.pitch_decoder = nn.Sequential(
             nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1),
             nn.LeakyReLU(),
-            nn.Conv1d(1, 1, stride=1, padding=1, dilation=1)
+            nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1)
         )
 
         self.fully_connected1 = nn.Sequential(
@@ -327,7 +327,7 @@ class Codec(nn.Module):
         ds_x1, x1 = self.res_encoder_block1(x)
         # transposed it back to (time, freq) and send the freq-vector of each frame into vq
         x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2))
-        # tranpose it to (freq, time) again for decoder (so that it could do conv1 on time series)
+        # tranpose it to (freq, time) again for decoder
         x1_quantized = x1_quantized.transpose(1, 2)
         x1_quantize_residual = x1 - x1_quantized # send the x1 - x1_q to the input of next encoder
 
@@ -346,14 +346,18 @@ class Codec(nn.Module):
         
         # decode x1
         x1_decoded = self.res_decoder_block3(x1_quantized)
+        
         x1_decoded = torch.concat([x1_decoded, pitch, mag], dim=1)
+        x1_decoded = x1_decoded.contiguous().transpose(1, 2)
         x1_decoded = self.fully_connected3(x1_decoded)
 
         # decode x2:
         #   decode x2_quantized (residual of x1) -> decode (x2_decoded + x1_quantized)
         x2_decoded = self.res_decoder_block2(x2_quantized)
         x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
+        
         x2_decoded = torch.concat([x2_decoded, pitch, mag], dim=1)
+        x2_decoded = x2_decoded.contiguous().transpose(1, 2)
         x2_decoded = self.fully_connected2(x2_decoded)
 
         # decode x3 (The flow written in the report)
@@ -361,17 +365,19 @@ class Codec(nn.Module):
         x3_decoded = self.res_decoder_block1(x3_quantized)
         x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized)
         x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized)
+        
         x3_decoded = torch.concat([x3_decoded, pitch, mag], dim=1)
+        x3_decoded = x3_decoded.contiguous().transpose(1, 2)
         x3_decoded = self.fully_connected1(x3_decoded)
         
 
-        x1_decoded_output = self.decoder_linear(x1_decoded)
+        x1_decoded_output = self.decoder_linear(x1_decoded.contiguous().transpose(1, 2))
         x1_decoded_output = x1_decoded_output.contiguous().transpose(1, 2)
 
-        x2_decoded_output = self.decoder_linear(x2_decoded)
+        x2_decoded_output = self.decoder_linear(x2_decoded.contiguous().transpose(1, 2))
         x2_decoded_output = x2_decoded_output.contiguous().transpose(1, 2)
 
-        x3_decoded_output = self.decoder_linear(x3_decoded)
+        x3_decoded_output = self.decoder_linear(x3_decoded.contiguous().transpose(1, 2))
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
         return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss)

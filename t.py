@@ -4,6 +4,8 @@ from torch import nn, Tensor
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
+mel = Tensor(size=(16, 256, 80))
+pitch = Tensor(size=(16, 2, 80))
 
 y, sr = librosa.load("80s Sine Synth.wav")
 pitches, mags = librosa.piptrack(y)

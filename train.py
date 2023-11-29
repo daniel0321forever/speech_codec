@@ -50,11 +50,16 @@ if __name__ == "__main__":
     
     print(f"Current device: {device}")
     
-    model_dir = 'models/codec_mel_spec'
+    
+    name = "pitch_and_mag"
+    model_dir = f'models/{name}'
+    logger_path = f'logger/{name}'
+
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
-
-    logger_path = 'logger/codec_mel_spec'
+    
+    if not os.path.exists(logger_path):
+        os.mkdir(logger_path)
 
     model = Codec(device=device).to(device)
     model.apply(init_weights)
@@ -97,13 +102,17 @@ if __name__ == "__main__":
 
     print ("Start training,", time.time())
     for epoch in range(100):
+        print(f"(epoch {epoch})")
         split_loss = np.zeros(6)
         use_linear_batch = 0
         for i, batchs in tqdm(enumerate(training_loader)):
 
             model_input = batchs[0].to(device) # take only the mel-cepstrum
+            pitch = batchs[2].to(device)
+            mag = batchs[3].to(device)
 
-            model_output_list, commit_loss_list = model(model_input)
+
+            model_output_list, commit_loss_list = model(model_input, pitch, mag)
 
             # the output from 3 different bitrate
             mel_loss1 = spec_loss_function(model_output_list[0], model_input)
@@ -142,8 +151,10 @@ if __name__ == "__main__":
             for i, batchs in tqdm(enumerate(test_loader)):
                 # print (batchs.shape)
                 model_input = batchs[0].to(device)
+                pitch = batchs[2].to(device)
+                mag = batchs[3].to(device)
 
-                model_output_list, commit_loss_list = model(model_input)
+                model_output_list, commit_loss_list = model(model_input, pitch, mag)
 
                 mel_loss1 = spec_loss_function(model_output_list[0], model_input)
                 mel_loss2 = spec_loss_function(model_output_list[1], model_input)
