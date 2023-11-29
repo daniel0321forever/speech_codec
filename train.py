@@ -112,8 +112,6 @@ if __name__ == "__main__":
             pitch = positional_encoding(batchs[2]).to(device)
             mag = batchs[3].to(device)
 
-            print(pitch.shape)
-
             model_output_list, commit_loss_list = model(model_input, pitch, mag)
 
             # the output from 3 different bitrate
@@ -153,7 +151,7 @@ if __name__ == "__main__":
             for i, batchs in tqdm(enumerate(test_loader)):
                 # print (batchs.shape)
                 model_input = batchs[0].to(device)
-                pitch = batchs[2].to(device)
+                pitch = positional_encoding(batchs[2]).to(device)
                 mag = batchs[3].to(device)
 
                 model_output_list, commit_loss_list = model(model_input, pitch, mag)

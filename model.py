@@ -260,25 +260,31 @@ class Codec(nn.Module):
 
         # (1, 80) -> (128, 80)
         self.pitch_decoder = nn.Sequential(
+            nn.Conv1d(self.pe_dim, self.pe_dim, 3, stride=1, padding=1, dilation=1),
+            nn.LeakyReLU(),
+            nn.Conv1d(self.pe_dim, self.pe_dim, 3, stride=1, padding=1, dilation=1)
+        )
+
+        self.mag_decoder = nn.Sequential(
             nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1),
             nn.LeakyReLU(),
-            nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1)
+            nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1)        
         )
 
         self.fully_connected1 = nn.Sequential(
-            nn.Linear(self.latent_dim + self.pe_dim, self.latent_dim),
+            nn.Linear(self.latent_dim + self.pe_dim + 1, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
         )
         self.fully_connected2 = nn.Sequential(
-            nn.Linear(self.latent_dim + self.pe_dim, self.latent_dim),
+            nn.Linear(self.latent_dim + self.pe_dim + 1, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
         )
         self.fully_connected3 = nn.Sequential(
-            nn.Linear(self.latent_dim + self.pe_dim, self.latent_dim),
+            nn.Linear(self.latent_dim + self.pe_dim + 1, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
@@ -342,8 +348,8 @@ class Codec(nn.Module):
         x3_quantized = x3_quantized.transpose(1, 2)
 
         # decode pitch, mag
-        pitch = self.pitch_decoder(pitch.contiguous().transpose(1, 2)) # (1, 80)
-        mag = self.pitch_decoder(mag.contiguous().transpose(1, 2)) # (1, 80)
+        pitch = self.pitch_decoder(pitch.transpose(1, 2)) # (1, 80)
+        mag = self.mag_decoder(mag.transpose(1, 2)) # (1, 80)
         
         # decode x1
         x1_decoded = self.res_decoder_block3(x1_quantized)
@@ -372,13 +378,13 @@ class Codec(nn.Module):
         x3_decoded = self.fully_connected1(x3_decoded)
         
 
-        x1_decoded_output = self.decoder_linear(x1_decoded.contiguous().transpose(1, 2))
+        x1_decoded_output = self.decoder_linear(x1_decoded.transpose(1, 2))
         x1_decoded_output = x1_decoded_output.contiguous().transpose(1, 2)
 
-        x2_decoded_output = self.decoder_linear(x2_decoded.contiguous().transpose(1, 2))
+        x2_decoded_output = self.decoder_linear(x2_decoded.transpose(1, 2))
         x2_decoded_output = x2_decoded_output.contiguous().transpose(1, 2)
 
-        x3_decoded_output = self.decoder_linear(x3_decoded.contiguous().transpose(1, 2))
+        x3_decoded_output = self.decoder_linear(x3_decoded.transpose(1, 2))
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
         return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss)
