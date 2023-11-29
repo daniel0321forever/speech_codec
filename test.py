@@ -16,6 +16,7 @@ from tqdm import tqdm
 from model import Codec, PWGVocoder
 from dataset import NSCDataset, compute_mel, compute_pitch
 from train import get_param_num
+from utils import positional_encoding
 
 frame_per_second = 200.0
 sample_rate = 24000
@@ -58,7 +59,7 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
     with torch.no_grad():
         for i in tqdm(range(len(source_mel_segments))):
             model_input = torch.tensor(source_mel_segments[i]).unsqueeze(0).to(device)
-            pitch_input = torch.tensor(source_pitch_segments[i]).unsqueeze(0).to(device)
+            pitch_input = positional_encoding(torch.tensor(source_pitch_segments[i]).unsqueeze(0)).to(device)
             mag_input = torch.tensor(source_mag_segments[i]).unsqueeze(0).to(device)
             
             model_input = torch.log(model_input + 1e-10)

@@ -109,9 +109,10 @@ if __name__ == "__main__":
         for i, batchs in tqdm(enumerate(training_loader)):
 
             model_input = batchs[0].to(device) # take only the mel-cepstrum
-            pitch = batchs[2].to(device)
+            pitch = positional_encoding(batchs[2]).to(device)
             mag = batchs[3].to(device)
 
+            print(pitch.shape)
 
             model_output_list, commit_loss_list = model(model_input, pitch, mag)
 
