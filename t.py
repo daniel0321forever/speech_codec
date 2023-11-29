@@ -1,17 +1,23 @@
 import torch
 from torch import nn, Tensor
 
-mel = Tensor(size=(1, 100, 80))
-pitch = Tensor(size=(1, 1, 80))
+import librosa
+import matplotlib.pyplot as plt
+import numpy as np
 
-cat = torch.concat([mel, pitch], dim=1)
-print(cat.shape)
+y, sr = librosa.load("80s Sine Synth.wav")
+pitches, mags = librosa.piptrack(y)
+print(pitches.shape)
 
-# linear = nn.Linear(101, 100)
-# x = linear(cat)
-# print(x.shape)
+for i in range(pitches.shape[1]):
+    index = mags[:,i].argmax()
+    pitch = pitches[index, i]
 
-# conv1 = nn.Conv1d(in_channels=100, out_channels=50, kernel_size=1)
-# x = conv1(mel)
+    print(index)
+    print(pitch)
+    
+    note_name = librosa.hz_to_note(pitch)
+    print(note_name)
 
-# print(x.shape)
+plt.plot(np.tile(np.arange(pitches.shape[1]), [100, 1]).T, pitches[:100, :].T, '.')
+plt.savefig("pitch.png")
