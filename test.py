@@ -1,4 +1,4 @@
-import os, sys, re, time
+import os, sys, re, time, argparse
 
 import pickle
 import librosa
@@ -90,91 +90,119 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
 from pesq import pesq
 
 if __name__ == "__main__":
-    model_path = sys.argv[1]
-    source_audio = sys.argv[2]
-    output_prefix = sys.argv[3]
-    gpu_id = sys.argv[4]
+
+    dirs = os.listdir("raw_data/test")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-m', '--model', required=False, default="models/pitch_and_mag/100.pth.tar")
+    parser.add_argument('p', 'prefix', required=False, default="new")
+    parser.add_argument('g', '--gpu_id', required=False, default=1)
+
+    args = parser.parse_args()
+    model_path = args.model
+    output_prefix = args.prefix
+    gpu_id = args.gpu_id
 
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-
-    # Source audio
-    source_y, sr = librosa.core.load(source_audio, sr=24000, mono=True)
-    source_y = librosa.util.normalize(source_y) * 0.9
-    source_mel_feature, source_spc = compute_mel(source_y)
-
-    # source pitch and mag
-    source_pitch, source_mag = compute_pitch(source_y)
-    max_mag_idx = np.argmax(source_mag, axis=1)    
-    source_pitch = np.array([[source_pitch[frame][max_mag_idx[frame]]] for frame in range(len(source_pitch))])
-    source_mag = np.array([[source_mag[frame][max_mag_idx[frame]]] for frame in range(len(source_mag))])
-    
-    print("source shape")
-    print (source_y.shape, source_mel_feature.shape, source_pitch.shape)
-
     device = torch.device('cuda'if torch.cuda.is_available()else 'cpu')
 
-    model = Codec(device=device).to(device)
-    num_param = get_param_num(model)
-    print('Number of codec parameters:', num_param)
 
-    checkpoint = torch.load(model_path, map_location=device)
-    model.load_state_dict(checkpoint, strict=True)
-    print("---Model Restored---", model_path, "\n")
+    count = 0
+    scores1 = []
+    scores2 = []
+    scores3 = []
+    scores_voc = []
+    scores_control = []
+
+    for singer in dirs:
+
+        source_audios = os.listdir(singer)
+
+        for source_audio in source_audios:
+
+            # Source audio
+            source_y, sr = librosa.core.load(source_audio, sr=24000, mono=True)
+            source_y = librosa.util.normalize(source_y) * 0.9
+            source_mel_feature, source_spc = compute_mel(source_y)
+
+            # source pitch and mag
+            source_pitch, source_mag = compute_pitch(source_y)
+            max_mag_idx = np.argmax(source_mag, axis=1)    
+            source_pitch = np.array([[source_pitch[frame][max_mag_idx[frame]]] for frame in range(len(source_pitch))])
+            source_mag = np.array([[source_mag[frame][max_mag_idx[frame]]] for frame in range(len(source_mag))])
+
+            # load Codec model and vocoder
+            model = Codec(device=device).to(device)
+            num_param = get_param_num(model)
+            print('Number of codec parameters:', num_param)
+
+            checkpoint = torch.load(model_path, map_location=device)
+            model.load_state_dict(checkpoint, strict=True)
+            print("---Model Restored---", model_path, "\n")
+            
+            vocoder = PWGVocoder(device=device, normalize_path='pwg/stats.h5'
+                , vocoder_path='pwg/checkpoint-400000steps.pkl').to(device)
+
+            model.eval()
+            
+            # get inference
+            use_griffim_lim = False
+            output_wav1, output_wav2, output_wav3 = inference(model, source_mel_feature, source_pitch, source_mag, device, use_griffim_lim=use_griffim_lim, vocoder=vocoder)
+
+            # write inference to wav file
+            wavfile.write(output_prefix + '_vq1.wav', 24000, output_wav1)
+            wavfile.write(output_prefix + '_vq2.wav', 24000, output_wav2)
+            wavfile.write(output_prefix + '_vq3.wav', 24000, output_wav3)
+            wavfile.write(output_prefix + '_norm.wav', 24000, source_y)
+
+            if use_griffim_lim:
+                vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
+                vocoder_baseline_output = librosa.griffinlim(torch.exp(vocoder_baseline_input).squeeze(0).cpu().numpy().T, n_iter=32, hop_length=300)
+                vocoder_baseline_output = vocoder_baseline_output
+
+            else:
+                vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
+                vocoder_baseline_output, _ = vocoder(vocoder_baseline_input, output_all=True)
+                vocoder_baseline_output = vocoder_baseline_output[0].cpu().numpy()
+
+            # vocoder_baseline_output = librosa.griffinlim(source_spc.T, n_iter=32, hop_length=300)
+            wavfile.write(output_prefix + '_vocoder.wav', 24000, vocoder_baseline_output)
+
+
+            # load output wav file
+            orig_audio_16k_norm, _ = librosa.core.load(output_prefix + '_norm.wav', sr=16000, mono=True)
+            vq_result1, _ = librosa.core.load(output_prefix + '_vq1.wav', sr=16000, mono=True)
+            vq_result2, _ = librosa.core.load(output_prefix + '_vq2.wav', sr=16000, mono=True)
+            vq_result3, _ = librosa.core.load(output_prefix + '_vq3.wav', sr=16000, mono=True)
+
+            vocoder_baseline_result, _ = librosa.core.load(output_prefix + '_vocoder.wav', sr=16000, mono=True)
+
+            if len(vq_result1) > len(orig_audio_16k_norm):
+                vq_result1 = vq_result1[:len(orig_audio_16k_norm)]
+
+            if len(vq_result2) > len(orig_audio_16k_norm):
+                vq_result2 = vq_result2[:len(orig_audio_16k_norm)]
+
+            if len(vq_result3) > len(orig_audio_16k_norm):
+                vq_result3 = vq_result3[:len(orig_audio_16k_norm)]
+
+            if len(vocoder_baseline_result) > len(orig_audio_16k_norm):
+                vocoder_baseline_result = vocoder_baseline_result[:len(orig_audio_16k_norm)]
+
+            print (orig_audio_16k_norm.shape, vq_result1.shape, vq_result2.shape, vq_result3.shape, vocoder_baseline_result.shape)
+            
+            # evaluate pesq score 
+            scores1.append(pesq(16000, orig_audio_16k_norm, vq_result1, 'nb'))
+            scores2.append(pesq(16000, orig_audio_16k_norm, vq_result2, 'nb'))
+            scores3.append(pesq(16000, orig_audio_16k_norm, vq_result3, 'nb'))
+            scores_voc.append(pesq(16000, orig_audio_16k_norm, vocoder_baseline_result, 'nb'))
+            scores_control.append(pesq(16000, orig_audio_16k_norm, orig_audio_16k_norm, 'nb'))
+
+            print (f"\n{source_audio}\nPESQ1 (No residual):{scores1[-1]}, PESQ2 (add layer 2 residual data) {scores2[-1]}, PESQ3 (add layer 2, 3 residual data{scores3[-1]}\n No resynthesis vocoder{scores_voc[-1]}, Max PESQ score: {scores_control[-1]}")
+
+            for tail in ["_norm.wav", "vq_1.wav", "vq_2.wav", "vq_3.wav", "_vocoder.wav"]:
+                os.remove(output_prefix + tail)
     
-    vocoder = PWGVocoder(device=device, normalize_path='pwg/stats.h5'
-        , vocoder_path='pwg/checkpoint-400000steps.pkl').to(device)
-
-    model.eval()
-
-    use_griffim_lim = False
-    output_wav1, output_wav2, output_wav3 = inference(model, source_mel_feature, source_pitch, source_mag, device, use_griffim_lim=use_griffim_lim, vocoder=vocoder)
-
-    print("get inference")
-    wavfile.write(output_prefix + '_vq1.wav', 24000, output_wav1)
-    wavfile.write(output_prefix + '_vq2.wav', 24000, output_wav2)
-    wavfile.write(output_prefix + '_vq3.wav', 24000, output_wav3)
-    wavfile.write(output_prefix + '_norm.wav', 24000, source_y)
-
-    if use_griffim_lim:
-        vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
-        vocoder_baseline_output = librosa.griffinlim(torch.exp(vocoder_baseline_input).squeeze(0).cpu().numpy().T, n_iter=32, hop_length=300)
-        vocoder_baseline_output = vocoder_baseline_output
-
-    else:
-        vocoder_baseline_input = torch.tensor(source_mel_feature).unsqueeze(0).to(device)
-        vocoder_baseline_output, _ = vocoder(vocoder_baseline_input, output_all=True)
-        vocoder_baseline_output = vocoder_baseline_output[0].cpu().numpy()
-
-    # vocoder_baseline_output = librosa.griffinlim(source_spc.T, n_iter=32, hop_length=300)
-    wavfile.write(output_prefix + '_vocoder.wav', 24000, vocoder_baseline_output)
-
-
-    orig_audio_16k_norm, _ = librosa.core.load(output_prefix + '_norm.wav', sr=16000, mono=True)
-    vq_result1, _ = librosa.core.load(output_prefix + '_vq1.wav', sr=16000, mono=True)
-    vq_result2, _ = librosa.core.load(output_prefix + '_vq2.wav', sr=16000, mono=True)
-    vq_result3, _ = librosa.core.load(output_prefix + '_vq3.wav', sr=16000, mono=True)
-
-    vocoder_baseline_result, _ = librosa.core.load(output_prefix + '_vocoder.wav', sr=16000, mono=True)
-
-    if len(vq_result1) > len(orig_audio_16k_norm):
-        vq_result1 = vq_result1[:len(orig_audio_16k_norm)]
-
-    if len(vq_result2) > len(orig_audio_16k_norm):
-        vq_result2 = vq_result2[:len(orig_audio_16k_norm)]
-
-    if len(vq_result3) > len(orig_audio_16k_norm):
-        vq_result3 = vq_result3[:len(orig_audio_16k_norm)]
-
-    if len(vocoder_baseline_result) > len(orig_audio_16k_norm):
-        vocoder_baseline_result = vocoder_baseline_result[:len(orig_audio_16k_norm)]
-
-    print (orig_audio_16k_norm.shape, vq_result1.shape, vq_result2.shape, vq_result3.shape, vocoder_baseline_result.shape)
-    
-    pesq1 = pesq(16000, orig_audio_16k_norm, vq_result1, 'nb')
-    pesq2 = pesq(16000, orig_audio_16k_norm, vq_result2, 'nb')
-    pesq3 = pesq(16000, orig_audio_16k_norm, vq_result3, 'nb')
-    pesq_vocoder = pesq(16000, orig_audio_16k_norm, vocoder_baseline_result, 'nb')
-
-    pesq_control = pesq(16000, orig_audio_16k_norm, orig_audio_16k_norm, 'nb')
-
-    print (pesq1, pesq2, pesq3, pesq_vocoder, pesq_control)
+    sample_len = len(scores1)
+    print("\n==================AVG Score==================")
+    print (f"PESQ1 (No residual):{np.array(scores1).mean()}, PESQ2 (add layer 2 residual data) {np.array(scores2).mean()}, PESQ3 (add layer 2, 3 residual data{np.array(scores3).mean()}\n No resynthesis vocoder{np.array(scores_voc).mean()}, Max PESQ score: {np.array(scores_control).mean()}")
