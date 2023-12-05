@@ -15,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from model import Codec, PWGVocoder, MelResCodec
 from dataset import NSCDataset
-from utils import positional_encoding
+from resources.utils import positional_encoding
 
 from torchaudio.transforms import Spectrogram
 # Since we need to normalize the loss
@@ -40,8 +40,11 @@ def init_weights(m):
     if isinstance(m, nn.Conv1d):
         torch.nn.init.xavier_uniform_(m.weight)
 
-if __name__ == "__main__":
 
+root_dir = '/media/daniel0321/LargeFiles/datasets/VCTK/'
+
+
+def train_pitch_mag_01():
     gpu_id = '0'
     torch.multiprocessing.set_sharing_strategy('file_system')
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
@@ -77,10 +80,10 @@ if __name__ == "__main__":
                                   betas=(0.9, 0.999),
                                   eps=1e-9)
 
-    with open('dataset/train_spc.pkl', 'rb') as f:
+    with open(root_dir + 'dataset/train_spc.pkl', 'rb') as f:
         train_dataset = pickle.load(f)
 
-    with open('dataset/test_spc.pkl', 'rb') as f:
+    with open(root_dir + 'dataset/test_spc.pkl', 'rb') as f:
         test_dataset = pickle.load(f)
 
     print ("Number of training sample:", len(train_dataset))
@@ -109,8 +112,8 @@ if __name__ == "__main__":
         for i, batchs in tqdm(enumerate(training_loader)):
 
             model_input = batchs[0].to(device) # take only the mel-cepstrum
-            pitch = positional_encoding(batchs[2]).to(device)
-            mag = batchs[3].to(device)
+            pitch = positional_encoding(batchs[1]).to(device)
+            mag = batchs[2].to(device)
 
             model_output_list, commit_loss_list = model(model_input, pitch, mag)
 
@@ -151,8 +154,8 @@ if __name__ == "__main__":
             for i, batchs in tqdm(enumerate(test_loader)):
                 # print (batchs.shape)
                 model_input = batchs[0].to(device)
-                pitch = positional_encoding(batchs[2]).to(device)
-                mag = batchs[3].to(device)
+                pitch = positional_encoding(batchs[1]).to(device)
+                mag = batchs[2].to(device)
 
                 model_output_list, commit_loss_list = model(model_input, pitch, mag)
 
@@ -188,3 +191,7 @@ if __name__ == "__main__":
         writer.add_scalar('Loss/VQ#1 training commit loss', split_loss[3], epoch + 1)
         writer.add_scalar('Loss/VQ#2 training commit loss', split_loss[4], epoch + 1)
         writer.add_scalar('Loss/VQ#3 training commit loss', split_loss[5], epoch + 1)
+
+
+def train_pitch_mag_02():
+    pass

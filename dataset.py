@@ -135,7 +135,7 @@ class NSCDataset(Dataset):
                     end = min(end, len(voc_mel))
 
                     cur_data = np.array(voc_mel[start:end])
-                    cur_spc = np.array(voc_spc[start:end])
+                    # cur_spc = np.array(voc_spc[start:end])
                     cur_pitch = np.array(voc_pitch[start:end])
                     cur_mag = np.array(voc_mag[start:end])
 
@@ -143,7 +143,7 @@ class NSCDataset(Dataset):
                         padding_length = sample_size - (end - start)
                         # print (cur_data.shape)
                         cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=-10.0))
-                        cur_spc = np.array(np.pad(cur_spc, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+                        # cur_spc = np.array(np.pad(cur_spc, pad_width=((0, padding_length), (0, 0)), constant_values=0))
                         cur_pitch = np.array(np.pad(cur_pitch, pad_width=((0, padding_length), (0, 0)), constant_values=0))
                         cur_mag = np.array(np.pad(cur_mag, pad_width=((0, padding_length), (0, 0)), constant_values=0))
                         
@@ -151,7 +151,7 @@ class NSCDataset(Dataset):
                         # print(cur_pitch.shape, cur_mag.shape)
 
                     self.mel_spec_list.append(cur_data)
-                    self.linear_spc_list.append(cur_spc)
+                    # self.linear_spc_list.append(cur_spc)
                     self.pitch_list.append(cur_pitch)
                     self.mag_list.append(cur_mag)
                     # self.singer_name_list.append(singer_name)
@@ -165,8 +165,8 @@ class NSCDataset(Dataset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--datadir', required=False, default="raw_data/train/wav48_silence_trimmed", type=str)
-    parser.add_argument('-o', '--output', required=False, default="dataset/train_spc.pkl", type=str)
+    parser.add_argument('-d', '--datadir', required=False, default="/media/daniel0321/LargeFiles/datasets/VCTK/raw_data/train/wav48_silence_trimmed", type=str)
+    parser.add_argument('-o', '--output', required=False, default="/media/daniel0321/LargeFiles/datasets/VCTK/dataset/train_spc.pkl", type=str)
     
     args = parser.parse_args()
     dataset_dir = args.datadir
@@ -184,5 +184,5 @@ if __name__ == "__main__":
 
     print("done")
     print (len(cur_dataset))
-    print (cur_dataset[0])
-    print (cur_dataset[0][0].shape, cur_dataset[0][1].shape, cur_dataset[0][2].shape, cur_dataset[0][3].shape) # mel_spec, linear_spc
+    # print (cur_dataset[0])
+    print (cur_dataset[0][0].shape, cur_dataset[0][1].shape, cur_dataset[0][2].shape) # mel_spec, linear_spc

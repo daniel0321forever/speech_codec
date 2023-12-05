@@ -16,7 +16,7 @@ from tqdm import tqdm
 from model import Codec, PWGVocoder
 from dataset import NSCDataset, compute_mel, compute_pitch
 from train import get_param_num
-from utils import positional_encoding
+from resources.utils import positional_encoding
 
 frame_per_second = 200.0
 sample_rate = 24000
@@ -90,13 +90,13 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
 from pesq import pesq
 
 if __name__ == "__main__":
-
-    dirs = os.listdir("raw_data/test")
+    audio_dir = "/media/daniel0321/LargeFiles/datasets/VCTK/raw_data/test/wav48_silence_trimmed"
+    dirs = os.listdir(audio_dir)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model', required=False, default="models/pitch_and_mag/100.pth.tar")
-    parser.add_argument('p', 'prefix', required=False, default="new")
-    parser.add_argument('g', '--gpu_id', required=False, default=1)
+    parser.add_argument('-p', '--prefix', required=False, default="new")
+    parser.add_argument('-g', '--gpu_id', required=False, default="1")
 
     args = parser.parse_args()
     model_path = args.model
@@ -115,10 +115,12 @@ if __name__ == "__main__":
     scores_control = []
 
     for singer in dirs:
+        singer = os.path.join(audio_dir, singer)
 
         source_audios = os.listdir(singer)
 
         for source_audio in source_audios:
+            source_audio = os.path.join(singer, source_audio)
 
             # Source audio
             source_y, sr = librosa.core.load(source_audio, sr=24000, mono=True)
