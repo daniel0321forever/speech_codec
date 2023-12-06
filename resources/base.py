@@ -18,24 +18,24 @@ from dataset import NSCDataset
 from resources.utils import positional_encoding
 
 
-class Model(ABC):
+class Pipeline(ABC):
 
     def __init__(
             self,
             model: torch.nn.Module,
             weight_dir: str,
-            log_dir = None | str,
-            device = None | str, 
+            log_dir: str | None,
+            device: str | None, 
             gpu_id = "0",
             is_speech_resynth = True,
     ):
         """
         #### Params:
-        weight_dir: The path for trained weight. In training method it would be the output path for model, in testing method it would be the path where we obtain the model's weight.
-        log_dir: The directory that stores the information of training process in tensorboard format
-        model: The torch model module that define the structore of the model
-        device: 'cuda' or 'cpu', define the device to execute the computation
-        gpu_id: The GPU ID used to execute the computation. Default 0 (if there is only one GPU)
+            - weight_dir: The path for trained weight. In training method it would be the output path for model, in testing method it would be the path where we obtain the model's weight.
+            - log_dir: The directory that stores the information of training process in tensorboard format
+            - model: The torch model module that define the structore of the model
+            - device: 'cuda' or 'cpu', define the device to execute the computation
+            - gpu_id: The GPU ID used to execute the computation. Default 0 (if there is only one GPU)
         """
 
         torch.multiprocessing.set_sharing_strategy('file_system')
@@ -68,15 +68,14 @@ class Model(ABC):
             self,
             train_set = None,
             test_set = None,
-            train_set_path = None | str,
-            test_set_path = None | str,
-            batch_size = 16 | int,
-            num_workers = 1 | int,
+            train_set_path: str | None = None,
+            test_set_path: str | None = None,
+            batch_size: int | None = None,
+            num_workers: int | None = None,
             learning_rate = 1e-4,
             max_epochs = 100,
             save_best = False,
     ):
-        
         if train_set is not None:
             self.train_set = train_set
         elif train_set_path is not None:
@@ -133,14 +132,14 @@ class Model(ABC):
             self.model.train()
 
             for i, batch in tqdm(enumerate(self.train_loader)):    
-                self.train_step()
+                self.train_step(i, batch)
             
             self.model.eval()
             with torch.no_grad():
                 self.val_loss = np.zeros(3)
 
                 for i, batch in tqdm(enumerate(self.test_loader)):
-                    self.val_step(batch)
+                    self.val_step(i, batch)
             
             self.train_loss = self.train_loss / len(self.train_loader)
             self.val_loss = self.val_loss / len(self.test_loader)
@@ -173,7 +172,7 @@ class Model(ABC):
         pass
     
     @abstractclassmethod
-    def train_step(self, batch):
+    def train_step(self, idx, batch):
         """
         The abstract method would perform the training process in each step given the batch
         data, including loss finding and backward propergation.
@@ -181,7 +180,7 @@ class Model(ABC):
         pass
 
     @abstractclassmethod
-    def val_step(self, batch):
+    def val_step(self, idx, batch):
         """
         The abstract method would perform the validation process in each validation step given
         the val_batch data, including loss finding. The with torch.no_grad() and model.eval() has
@@ -198,7 +197,7 @@ class Model(ABC):
         pass
     
     @abstractclassmethod
-    def log(self):
+    def log(self, epoch):
         """
         The function is for you to design your own logging format on tensorboard, one could use the 
         self.writer to log the events in training process in this abstract method.

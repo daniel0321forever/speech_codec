@@ -1,4 +1,4 @@
-import os, sys, re, time, argparse
+import os, sys, re, time, argparse, logging
 
 import pickle
 import librosa
@@ -57,7 +57,7 @@ def inference(model, source_mel, source_pitch, source_mag, device, use_griffim_l
     pred_list_vq3 = []
 
     with torch.no_grad():
-        for i in tqdm(range(len(source_mel_segments))):
+        for i in range(len(source_mel_segments)):
             model_input = torch.tensor(source_mel_segments[i]).unsqueeze(0).to(device)
             pitch_input = positional_encoding(torch.tensor(source_pitch_segments[i]).unsqueeze(0)).to(device)
             mag_input = torch.tensor(source_mag_segments[i]).unsqueeze(0).to(device)
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model', required=False, default="models/pitch_and_mag/100.pth.tar")
     parser.add_argument('-p', '--prefix', required=False, default="new")
-    parser.add_argument('-g', '--gpu_id', required=False, default="1")
+    parser.add_argument('-g', '--gpu_id', required=False, default="0")
 
     args = parser.parse_args()
     model_path = args.model
@@ -116,7 +116,8 @@ if __name__ == "__main__":
 
     for singer in dirs:
         singer = os.path.join(audio_dir, singer)
-
+        
+        logging.info(singer)
         source_audios = os.listdir(singer)
 
         for source_audio in source_audios:
@@ -200,11 +201,19 @@ if __name__ == "__main__":
             scores_voc.append(pesq(16000, orig_audio_16k_norm, vocoder_baseline_result, 'nb'))
             scores_control.append(pesq(16000, orig_audio_16k_norm, orig_audio_16k_norm, 'nb'))
 
-            print (f"\n{source_audio}\nPESQ1 (No residual):{scores1[-1]}, PESQ2 (add layer 2 residual data) {scores2[-1]}, PESQ3 (add layer 2, 3 residual data{scores3[-1]}\n No resynthesis vocoder{scores_voc[-1]}, Max PESQ score: {scores_control[-1]}")
+            print(f"\n{source_audio}")
+            print(f"PESQ1 (No residual):{scores1[-1]}")
+            print(f"PESQ2 (add layer 2 residual data):{scores2[-1]}")
+            print(f"PESQ3 (add layer 2, 3 residual data):{scores3[-1]}")
+            print(f"No resynthesis vocoder:{scores_voc[-1]}")
+            print(f"Max PESQ score:{scores_control[-1]}")
 
-            for tail in ["_norm.wav", "vq_1.wav", "vq_2.wav", "vq_3.wav", "_vocoder.wav"]:
-                os.remove(output_prefix + tail)
-    
+            if count != 18:
+                for tail in ["_norm.wav", "_vq1.wav", "_vq2.wav", "_vq3.wav", "_vocoder.wav"]:
+                    os.remove(output_prefix + tail)
+            
+            count += 1
+
     sample_len = len(scores1)
     print("\n==================AVG Score==================")
     print (f"PESQ1 (No residual):{np.array(scores1).mean()}, PESQ2 (add layer 2 residual data) {np.array(scores2).mean()}, PESQ3 (add layer 2, 3 residual data{np.array(scores3).mean()}\n No resynthesis vocoder{np.array(scores_voc).mean()}, Max PESQ score: {np.array(scores_control).mean()}")

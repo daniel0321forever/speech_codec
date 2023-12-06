@@ -353,7 +353,6 @@ class Codec(nn.Module):
         
         # decode x1
         x1_decoded = self.res_decoder_block3(x1_quantized)
-        
         x1_decoded = torch.concat([x1_decoded, pitch, mag], dim=1)
         x1_decoded = x1_decoded.contiguous().transpose(1, 2)
         x1_decoded = self.fully_connected3(x1_decoded)
@@ -362,7 +361,6 @@ class Codec(nn.Module):
         #   decode x2_quantized (residual of x1) -> decode (x2_decoded + x1_quantized)
         x2_decoded = self.res_decoder_block2(x2_quantized)
         x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
-        
         x2_decoded = torch.concat([x2_decoded, pitch, mag], dim=1)
         x2_decoded = x2_decoded.contiguous().transpose(1, 2)
         x2_decoded = self.fully_connected2(x2_decoded)
@@ -372,7 +370,6 @@ class Codec(nn.Module):
         x3_decoded = self.res_decoder_block1(x3_quantized)
         x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized)
         x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized)
-        
         x3_decoded = torch.concat([x3_decoded, pitch, mag], dim=1)
         x3_decoded = x3_decoded.contiguous().transpose(1, 2)
         x3_decoded = self.fully_connected1(x3_decoded)

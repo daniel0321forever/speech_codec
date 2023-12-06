@@ -161,7 +161,7 @@ class NSCDataset(Dataset):
 
     def __getitem__(self, idx):
         # print (self.mel_spec_list[idx].shape)
-        return (self.mel_spec_list[idx], self.linear_spc_list[idx], self.pitch_list[idx], self.mag_list[idx])
+        return (self.mel_spec_list[idx], self.pitch_list[idx], self.mag_list[idx])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
