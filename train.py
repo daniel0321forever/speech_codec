@@ -5,10 +5,10 @@ import numpy as np
 import torch
 from torch import nn
 
-from resources.base import Pipeline
-from resources.utils import positional_encoding, positional_encoding_by_frame
+from utils.base import Pipeline
+from utils.utils import positional_encoding, positional_encoding_by_frame, compute_mel, compute_pitch
 from model import Codec
-from dataset import NSCDataset 
+from dataset import NSCDataset
 
 class PM2_pipeline(Pipeline):
 
@@ -60,6 +60,70 @@ class PM2_pipeline(Pipeline):
             mel_loss_list[i] = self.criteria(model_output_list[i], mel_input)
             self.val_loss[i] += mel_loss_list[i].item()
 
+    def inference(self, source_path: str):
+        
+        # get input
+        y = self.source_y
+        mel = self.source_mel_feature
+
+        pitch, mag = compute_pitch(y)
+        max_mag_idx = np.argmax(mag, axis=1)    
+        pitch = np.array([[pitch[frame][max_mag_idx[frame]]] for frame in range(len(pitch))])
+        mag = np.array([[mag[frame][max_mag_idx[frame]]] for frame in range(len(mag))])
+
+        # slice data
+        sample_size = 200
+        mel_segments = []
+        pitch_segments = []
+        mag_segments = []
+
+        for i in range(0, len(mel), sample_size):
+            start = i
+            end = min(i+sample_size, len(mel))
+            
+            if start + 1 < end:
+                cur_data = np.array(mel[start:end])
+                cur_pitch = np.array(pitch[start:end])
+                cur_mag = np.array(mag[start:end])
+
+                if end - start < sample_size:
+                    padding_length = sample_size - (end - start)
+                    
+                    cur_data = np.array(np.pad(cur_data, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+                    cur_pitch = np.array(np.pad(cur_pitch, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+                    cur_mag = np.array(np.pad(cur_mag, pad_width=((0, padding_length), (0, 0)), constant_values=0))
+
+                mel_segments.append(cur_data)
+                pitch_segments.append(cur_pitch)
+                mag_segments.append(cur_mag)
+                
+        pred_list_vq1 = []
+        pred_list_vq2 = []
+        pred_list_vq3 = []
+
+        with torch.no_grad():
+            for i in range(len(mel_segments)):
+                model_input = torch.tensor(mel_segments[i]).unsqueeze(0).to(self.device)
+                pitch_input = positional_encoding_by_frame(torch.tensor(pitch_segments[i]).unsqueeze(0)).to(self.device)
+                mag_input = torch.tensor(mag_segments[i]).unsqueeze(0).to(self.device)
+                
+                model_input = torch.log(model_input + 1e-10)
+                
+                model_output_list, commit_loss_list = model(model_input, pitch_input, mag_input)
+
+                waveform_output_vq1, _ = self.vocoder(model_output_list[0], output_all=True)
+                waveform_output_vq2, _ = self.vocoder(model_output_list[1], output_all=True)
+                waveform_output_vq3, _ = self.vocoder(model_output_list[2], output_all=True)
+                pred_list_vq1.append(waveform_output_vq1[0].cpu())
+                pred_list_vq2.append(waveform_output_vq2[0].cpu())
+                pred_list_vq3.append(waveform_output_vq3[0].cpu())
+
+        output_wav1 = np.concatenate(pred_list_vq1, axis=0)
+        output_wav2 = np.concatenate(pred_list_vq2, axis=0)
+        output_wav3 = np.concatenate(pred_list_vq3, axis=0)
+
+        return output_wav1, output_wav2, output_wav3
+
     def log(self):
         logging.error("log?")
     
@@ -77,7 +141,11 @@ if __name__ == '__main__':
         log_dir = "logger/pitch_and_mag_newencode"
     )
 
-    pipeline.train(
-        train_set_path = os.path.join(root_dir, "dataset/train_spc.pkl"),
-        test_set_path = os.path.join(root_dir, "dataset/test_spc.pkl") 
+    # pipeline.train(
+    #     train_set_path = os.path.join(root_dir, "dataset/train_spc.pkl"),
+    #     test_set_path = os.path.join(root_dir, "dataset/test_spc.pkl") 
+    # )
+
+    pipeline.test(
+        prefix="pe2"
     )

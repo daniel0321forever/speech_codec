@@ -10,6 +10,8 @@ from tqdm import tqdm
 
 from torch.utils.data import Dataset, DataLoader
 
+from utils.utils import compute_pitch, compute_mel
+
 sample_rate = 24000
 fft_size = 2048
 win_length = 1200
@@ -28,61 +30,7 @@ num_mels = 80
 fmin = 80
 fmax = 7600
 
-def compute_mel(y):
-    
-    eps = 1e-10
-    log_base = 10.0
 
-    x_stft = librosa.stft(
-        y=y,
-        n_fft=fft_size,
-        hop_length=hop_length,
-        win_length=win_length,
-        center=True,
-        pad_mode="reflect",
-    )
-    spc = np.abs(x_stft).T  # (#frames, #bins)
-
-    # get mel basis -> project the freq at each time frame onto the mel basis (not log yet)
-    mel_basis = librosa.filters.mel(sr=sample_rate, n_fft=fft_size, n_mels=num_mels, fmin=fmin, fmax=fmax)
-    mel = np.maximum(eps, np.dot(spc, mel_basis.T))
-
-
-    x_stft_supp = librosa.stft(
-        y=y,
-        n_fft=supp_fft_size,
-        hop_length=supp_hop_length,
-        win_length=supp_fft_size,
-        center=True,
-        pad_mode="reflect",
-    )
-    # just spectrum, no mel cepstrum
-    spc_supp = np.abs(x_stft_supp).T
-
-    # Get log spec
-    # spc = librosa.amplitude_to_db(spc)
-
-    # print (mel.shape)
-    return np.log10(mel), spc_supp
-
-def compute_pitch(y):
-    sr = 24000
-    pitch, mag = librosa.piptrack(
-        y=y, 
-        sr=sr, 
-        n_fft=fft_size, 
-        fmin=fmin,
-        fmax=fmax,
-        hop_length=hop_length,
-        win_length=win_length,
-        center=True,
-        pad_mode="reflect",
-    )
-
-    pitch = pitch.T
-    mag = mag.T
-
-    return pitch, mag
 
 class NSCDataset(Dataset):
 

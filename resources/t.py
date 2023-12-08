@@ -1,7 +1,7 @@
 import torch
 from torch import nn, Tensor
 import math
-from resources.utils import positional_encoding
+from utils.utils import positional_encoding
 
 """
 pitch input shape:

@@ -217,7 +217,7 @@ class Codec(nn.Module):
         self.input_dim = 80 # Yeah, it is the frequencies dimension
         self.latent_dim = 256
         self.frames = 80
-        self.pe_dim = 64
+        self.pe_dim = 65
 
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),

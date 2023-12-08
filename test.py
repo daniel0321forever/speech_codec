@@ -14,9 +14,9 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from model import Codec, PWGVocoder
-from dataset import NSCDataset, compute_mel, compute_pitch
+from dataset import NSCDataset
 from train import get_param_num
-from resources.utils import positional_encoding
+from utils.utils import positional_encoding, compute_mel, compute_pitch
 
 frame_per_second = 200.0
 sample_rate = 24000
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     for singer in dirs:
         singer = os.path.join(audio_dir, singer)
         
-        logging.info(singer)
+        print(singer)
         source_audios = os.listdir(singer)
 
         for source_audio in source_audios:
