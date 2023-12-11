@@ -27,7 +27,7 @@ class Pipeline(ABC):
             model: torch.nn.Module,
             weight_dir: str,
             log_dir: str | None,
-            device: str | None, 
+            device: str | None = None, 
             gpu_id = "0",
             is_speech_resynth = True,
             sr = 24000,
@@ -183,6 +183,20 @@ class Pipeline(ABC):
         self.test_scores = np.zeros(5)
         self.prefix = prefix
         
+
+        # restore model
+        self.model_path = os.path.join(self.weight_dir, os.path.basename(model_name))
+        checkpoint = torch.load(self.model_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint, strict=True)
+        self.model.eval()
+
+        # vocoder
+        self.vocoder = PWGVocoder(
+            device=self.device,
+            normalize_path='pwg/stats.h5',
+            vocoder_path='pwg/checkpoint-400000steps.pkl'
+        ).to(self.device)
+        
         if self.is_speech_resynth:
             
             count = 0
@@ -197,18 +211,7 @@ class Pipeline(ABC):
 
                     print(source_audio)
 
-                    # restore model
-                    self.model_path = os.path.join(self.weight_dir, os.path.basename(model_name))
-                    checkpoint = torch.load(self.model_path, map_location=self.device)
-                    self.model.load_state_dict(checkpoint, strict=True)
-                    self.model.eval()
-
-                    # vocoder
-                    self.vocoder = PWGVocoder(
-                        device=self.device,
-                        normalize_path='pwg/stats.h5',
-                        vocoder_path='pwg/checkpoint-400000steps.pkl'
-                    ).to(self.device)
+                   
 
                     # get input data
                     self.source_y = librosa.core.load(source_audio, sr=self.sr, mono=True)[0] # might be helpful in inference

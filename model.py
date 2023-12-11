@@ -217,7 +217,7 @@ class Codec(nn.Module):
         self.input_dim = 80 # Yeah, it is the frequencies dimension
         self.latent_dim = 256
         self.frames = 80
-        self.pe_dim = 65
+        self.pitch_dim = 64
 
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
@@ -228,10 +228,24 @@ class Codec(nn.Module):
                 nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
             )
+        
+
+        # input (bins=pitch_dim, frames) -> output (bins=pitch_dims, frames)
+        self.pitch_encoder = nn.Sequential(
+                nn.Conv1d(self.pitch_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+        )
+
 
         self.res_encoder_block1 = ResBlock(self.latent_dim, temp_downsample_rate=4)
         self.res_encoder_block2 = ResBlock(self.latent_dim, temp_downsample_rate=2)
         self.res_encoder_block3 = ResBlock(self.latent_dim)
+
 
         self.vq1 = VectorQuantize(
                         dim = self.latent_dim,
@@ -254,37 +268,37 @@ class Codec(nn.Module):
                         commitment_weight = 1.
                     )
         
+        self.vq_pitch = VectorQuantize(
+                        dim = self.latent_dim, # positional encoding dim
+                        codebook_size = 128,
+                        decay = 0.99,
+                        commitment_weight = 1,
+                    )
+
         self.res_decoder_block1 = ResBlock(self.latent_dim)
         self.res_decoder_block2 = ResBlock(self.latent_dim)
         self.res_decoder_block3 = ResBlock(self.latent_dim)
 
-        # (1, 80) -> (128, 80)
-        self.pitch_decoder = nn.Sequential(
-            nn.Conv1d(self.pe_dim, self.pe_dim, 3, stride=1, padding=1, dilation=1),
-            nn.LeakyReLU(),
-            nn.Conv1d(self.pe_dim, self.pe_dim, 3, stride=1, padding=1, dilation=1)
-        )
-
-        self.mag_decoder = nn.Sequential(
-            nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1),
-            nn.LeakyReLU(),
-            nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1)        
-        )
+        # self.mag_decoder = nn.Sequential(
+        #     nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1),
+        #     nn.LeakyReLU(),
+        #     nn.Conv1d(1, 1, 3, stride=1, padding=1, dilation=1)        
+        # )
 
         self.fully_connected1 = nn.Sequential(
-            nn.Linear(self.latent_dim + self.pe_dim + 1, self.latent_dim),
+            nn.Linear(self.latent_dim + self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
         )
         self.fully_connected2 = nn.Sequential(
-            nn.Linear(self.latent_dim + self.pe_dim + 1, self.latent_dim),
+            nn.Linear(self.latent_dim + self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
         )
         self.fully_connected3 = nn.Sequential(
-            nn.Linear(self.latent_dim + self.pe_dim + 1, self.latent_dim),
+            nn.Linear(self.latent_dim + self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.LeakyReLU(),
@@ -323,20 +337,31 @@ class Codec(nn.Module):
         x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3.transpose(1, 2))
         x3_quantized = x3_quantized.transpose(1, 2)
 
-        return x1_indices, x2_indices, x3_indices, pitch, mag
+        # decode pitch, mag
+        pitch = self.pitch_encoder(pitch.transpose(1, 2)) # (64, 80)
+        pitch_quantized, pitch_indices, pitch_commit_loss = self.vq_pitch(pitch)
+        pitch_quantized = pitch_quantized.transpose(1, 2) # (80, 64)
+        # mag = self.mag_decoder(mag.transpose(1, 2)) # (64, 80)
 
-    def forward(self, x: torch.Tensor, pitch: torch.Tensor, mag: torch.Tensor):
+        return x1_indices, x2_indices, x3_indices, pitch_indices
 
-        x = x.contiguous().transpose(1, 2) # tranpose the input into (freq, times)
+    def forward(self, x: torch.Tensor, pitch: torch.Tensor):
+
+        x = x.contiguous().transpose(1, 2) # tranpose the input into (bins, frames)
         x = self.encoder_linear(x)
+        
+        pitch = pitch.contiguous().transpose(1, 2) # transpose the input into (encoded features = 64, frames)
+
+        # pitch quantize
+        pitch = self.pitch_encoder(pitch)
+        pitch_quantized, pitch_indices, pitch_commit_loss = self.vq_pitch(pitch.transpose(1, 2)) # (frames=80, features=256)
+        pitch_quantized = pitch_quantized.transpose(1, 2)
 
         # First CNN + VQ compressor
         ds_x1, x1 = self.res_encoder_block1(x)
-        # transposed it back to (time, freq) and send the freq-vector of each frame into vq
         x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2))
-        # tranpose it to (freq, time) again for decoder
         x1_quantized = x1_quantized.transpose(1, 2)
-        x1_quantize_residual = x1 - x1_quantized # send the x1 - x1_q to the input of next encoder
+        x1_quantize_residual = x1 - x1_quantized
 
         ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual)
         x2_quantized, x2_indices, x2_commit_loss = self.vq2(ds_x2.transpose(1, 2))
@@ -346,31 +371,27 @@ class Codec(nn.Module):
         x3 = self.res_encoder_block3(x2_quantize_residual)
         x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3.transpose(1, 2))
         x3_quantized = x3_quantized.transpose(1, 2)
-
-        # decode pitch, mag
-        pitch = self.pitch_decoder(pitch.transpose(1, 2)) # (1, 80)
-        mag = self.mag_decoder(mag.transpose(1, 2)) # (1, 80)
         
         # decode x1
-        x1_decoded = self.res_decoder_block3(x1_quantized)
-        x1_decoded = torch.concat([x1_decoded, pitch, mag], dim=1)
+        x1_decoded = self.res_decoder_block3(x1_quantized)    
+        x1_decoded = torch.concat([x1_decoded, pitch_quantized], dim=1)
         x1_decoded = x1_decoded.contiguous().transpose(1, 2)
         x1_decoded = self.fully_connected3(x1_decoded)
 
         # decode x2:
         #   decode x2_quantized (residual of x1) -> decode (x2_decoded + x1_quantized)
         x2_decoded = self.res_decoder_block2(x2_quantized)
-        x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
-        x2_decoded = torch.concat([x2_decoded, pitch, mag], dim=1)
+        x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized) # TODO: Change to x1_decoded
+        x2_decoded = torch.concat([x2_decoded, pitch_quantized], dim=1)
         x2_decoded = x2_decoded.contiguous().transpose(1, 2)
         x2_decoded = self.fully_connected2(x2_decoded)
 
         # decode x3 (The flow written in the report)
         #   decode x3_quantized -> decode x3_decoded + x2_quantized -> decode x3x2_decoded + x1_quantized
         x3_decoded = self.res_decoder_block1(x3_quantized)
-        x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized)
-        x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized)
-        x3_decoded = torch.concat([x3_decoded, pitch, mag], dim=1)
+        x3_decoded = self.res_decoder_block2(x3_decoded + x2_quantized) # TODO: Change to x2_decoded
+        x3_decoded = self.res_decoder_block3(x3_decoded + x1_quantized) # TODO: Change to x1_decoded
+        x3_decoded = torch.concat([x3_decoded, pitch_quantized], dim=1)
         x3_decoded = x3_decoded.contiguous().transpose(1, 2)
         x3_decoded = self.fully_connected1(x3_decoded)
         
@@ -384,4 +405,4 @@ class Codec(nn.Module):
         x3_decoded_output = self.decoder_linear(x3_decoded.transpose(1, 2))
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
-        return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss)
+        return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss, pitch_commit_loss)

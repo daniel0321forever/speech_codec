@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from model import Codec, PWGVocoder
 from dataset import NSCDataset
-from train import get_param_num
+from pipeline import get_param_num
 from utils.utils import positional_encoding, compute_mel, compute_pitch
 
 frame_per_second = 200.0
