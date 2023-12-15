@@ -15,7 +15,7 @@ fmin = 80
 fmax = 7600
 
 
-def positional_encoding(pitch_array: torch.Tensor, is_batch = True):
+def positional_encoding(pitch_array: torch.Tensor, dim=64, is_batch = True):
     """
     returns
         (batch_size, frames, seq_len)
@@ -24,7 +24,7 @@ def positional_encoding(pitch_array: torch.Tensor, is_batch = True):
         - pitch_array: an shape (batch_size, frames, 1) array that include the pitch number in each frame of a batch
     """
 
-    seq_len = 64
+    seq_len = dim
     n = 10000
 
     even = lambda k, i: math.sin(k / (n ** (2 * i / seq_len)))

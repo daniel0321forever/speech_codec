@@ -273,13 +273,13 @@ class Codec(nn.Module):
 
     def forward(self, x):
 
-        x = x.contiguous().transpose(1, 2)
-        x = self.encoder_linear(x)
+        x = x.contiguous().transpose(1, 2) # (bins=80,frames=80)
+        x = self.encoder_linear(x) # (frames, feats)
 
         # First CNN + VQ compressor
         ds_x1, x1 = self.res_encoder_block1(x)
-        x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2))
-        x1_quantized = x1_quantized.transpose(1, 2)
+        x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2)) # (frames, features)
+        x1_quantized = x1_quantized.transpose(1, 2) # (feats, frames)
         x1_quantize_residual = x1 - x1_quantized
 
         ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual)
@@ -291,7 +291,7 @@ class Codec(nn.Module):
         x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3.transpose(1, 2))
         x3_quantized = x3_quantized.transpose(1, 2)
 
-        x1_decoded = self.res_decoder_block3(x1_quantized)
+        x1_decoded = self.res_decoder_block3(x1_quantized) # (feats, frames)
 
         x2_decoded = self.res_decoder_block2(x2_quantized)
         x2_decoded = self.res_decoder_block3(x2_decoded + x1_quantized)
@@ -302,7 +302,7 @@ class Codec(nn.Module):
         
 
         x1_decoded_output = self.decoder_linear(x1_decoded)
-        x1_decoded_output = x1_decoded_output.contiguous().transpose(1, 2)
+        x1_decoded_output = x1_decoded_output.contiguous().transpose(1, 2) # (frames, bins)
 
         x2_decoded_output = self.decoder_linear(x2_decoded)
         x2_decoded_output = x2_decoded_output.contiguous().transpose(1, 2)

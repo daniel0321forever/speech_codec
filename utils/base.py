@@ -1,4 +1,4 @@
-import os, random, sys, logging, time, math
+import os, random, sys, logging, time, math, datetime
 from abc import ABC, abstractclassmethod
 
 import numpy as np
@@ -62,6 +62,23 @@ class Pipeline(ABC):
         self.model = model.to(self.device)
         self.model.apply(self._init_weights)
 
+        self.optimizer = torch.optim.AdamW(
+            [{'params': self.model.parameters(), 'weight_decay': 1e-9},],
+            lr=1e-4,
+            betas=(0.9, 0.999),
+            eps=1e-9
+        )
+
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer=self.optimizer,
+            gamma=0.92,
+            verbose=True,
+        )
+
+        self.criteria = nn.MSELoss()
+
+        self.loss_len = 6
+
         print("Model built")
         print(f'| device: {self.device}')
         print("| num of params", self._get_param_num())
@@ -74,9 +91,8 @@ class Pipeline(ABC):
             test_set = None,
             train_set_path: str | None = None,
             test_set_path: str | None = None,
-            batch_size: int | None = None,
-            num_workers: int | None = None,
-            learning_rate = 1e-4,
+            batch_size = 16,
+            num_workers = 4,
             max_epochs = 100,
             save_best = False,
     ):
@@ -108,36 +124,31 @@ class Pipeline(ABC):
             raise ValueError
 
         self.train_loader = DataLoader(self.train_set,
-                                    batch_size=16,
+                                    batch_size=batch_size,
                                     shuffle=True,
-                                    num_workers=4)
+                                    num_workers=num_workers)
 
         self.test_loader = DataLoader(self.test_set,
-                                batch_size=16,
+                                batch_size=batch_size,
                                 shuffle=False,
-                                num_workers=4)
-        
-        self.optimizer = torch.optim.Adam(
-            [{'params': self.model.parameters(), 'weight_decay': 1e-9},],
-            lr=learning_rate,
-            betas=(0.9, 0.999),
-            eps=1e-9
-        )
+                                num_workers=num_workers)
+
         self.writer = SummaryWriter(self.log_dir)
 
-        self.criteria = nn.MSELoss()
-        
         print("Start training,", time.time())
 
         for epoch in range(max_epochs):
             
-            print("epoch |", epoch)
-            self.train_loss = np.zeros(6)
+            print("\nepoch |", epoch)
+
+            # training
+            self.train_loss = np.zeros(self.loss_len)
             self.model.train()
 
             for i, batch in tqdm(enumerate(self.train_loader)):    
                 self.train_step(i, batch)
             
+            # validation
             self.model.eval()
             with torch.no_grad():
                 self.val_loss = np.zeros(3)
@@ -145,8 +156,14 @@ class Pipeline(ABC):
                 for i, batch in tqdm(enumerate(self.test_loader)):
                     self.val_step(i, batch)
             
+            # scheduler
+            self.scheduler.step()
+
+
+            # output step result
             self.train_loss = self.train_loss / len(self.train_loader)
             self.val_loss = self.val_loss / len(self.test_loader)
+
             print("Training loss:", self.train_loss)
             print("Val loss:", self.val_loss)
 
@@ -170,18 +187,19 @@ class Pipeline(ABC):
 
                 self.writer.add_scalar('Loss/VQ#1 training commit loss', self.train_loss[3], epoch + 1)
                 self.writer.add_scalar('Loss/VQ#2 training commit loss', self.train_loss[4], epoch + 1)
-                self.writer.add_scalar('Loss/VQ#3 training commit loss', self.train_loss[5], epoch + 1)                
+                self.writer.add_scalar('Loss/VQ#3 training commit loss', self.train_loss[5], epoch + 1)       
+
+                for i in range(6, len(self.train_loss)):
+                    self.writer.add_scalar(f'training loss {i}', self.train_loss[i], epoch + 1)      
 
     def test(
             self,
             test_dir = "/media/daniel0321/LargeFiles/datasets/VCTK/raw_data/test/wav48_silence_trimmed",
             model_name = "100.pth.tar",
-            prefix = f"model_{time.time()}",
     ):
         
         self.test_dir = test_dir
         self.test_scores = np.zeros(5)
-        self.prefix = prefix
         
 
         # restore model
@@ -211,8 +229,6 @@ class Pipeline(ABC):
 
                     print(source_audio)
 
-                   
-
                     # get input data
                     self.source_y = librosa.core.load(source_audio, sr=self.sr, mono=True)[0] # might be helpful in inference
                     self.source_y = librosa.util.normalize(self.source_y) * 0.9
@@ -221,26 +237,25 @@ class Pipeline(ABC):
                     output_wavs = self.inference(source_path=source_audio) # len = 3 normally
 
                     # get wave file 
-
                     for i in range(len(output_wavs)):
-                        wavfile.write(prefix + f"_vq{i+1}.wav", self.sr, output_wavs[i])
+                        wavfile.write(f"vq{i+1}.wav", self.sr, output_wavs[i])
                     
                     # get vocoder origin wave file
                     vocoder_baseline_input = torch.tensor(self.source_mel_feature).unsqueeze(0).to(self.device)
                     vocoder_baseline_output, _ = self.vocoder(vocoder_baseline_input, output_all=True)
                     vocoder_baseline_output = vocoder_baseline_output[0].cpu().numpy()
                     
-                    wavfile.write(prefix + f"_norm.wav", self.sr, self.source_y)
-                    wavfile.write(prefix + '_vocoder.wav', self.sr, vocoder_baseline_output)
+                    wavfile.write(f"norm.wav", self.sr, self.source_y)
+                    wavfile.write('vocoder.wav', self.sr, vocoder_baseline_output)
 
 
                     # load output wav file
                     vocoder_result = [None] * len(self.test_scores)
-                    vocoder_result[0], _ = librosa.core.load(prefix + '_vq1.wav', sr=16000, mono=True) # vq_result1
-                    vocoder_result[1], _ = librosa.core.load(prefix + '_vq2.wav', sr=16000, mono=True) # vq_result2
-                    vocoder_result[2], _ = librosa.core.load(prefix + '_vq3.wav', sr=16000, mono=True) # vq_result3
-                    vocoder_result[3], _ = librosa.core.load(prefix + '_vocoder.wav', sr=16000, mono=True) # vocoder_baseline_result
-                    vocoder_result[4], _ = librosa.core.load(prefix + '_norm.wav', sr=16000, mono=True) # orig_audio_16k_norm
+                    vocoder_result[0], _ = librosa.core.load('vq1.wav', sr=16000, mono=True) # vq_result1
+                    vocoder_result[1], _ = librosa.core.load('vq2.wav', sr=16000, mono=True) # vq_result2
+                    vocoder_result[2], _ = librosa.core.load('vq3.wav', sr=16000, mono=True) # vq_result3
+                    vocoder_result[3], _ = librosa.core.load('vocoder.wav', sr=16000, mono=True) # vocoder_baseline_result
+                    vocoder_result[4], _ = librosa.core.load('norm.wav', sr=16000, mono=True) # orig_audio_16k_norm
 
                     for i in range(len(vocoder_result)):
                         if len(vocoder_result[i]) > len(vocoder_result[4]):
@@ -249,8 +264,8 @@ class Pipeline(ABC):
                         self.test_scores[i] += pesq(16000, vocoder_result[4], vocoder_result[i], 'nb')
                         print(pesq(16000, vocoder_result[4], vocoder_result[i], 'nb'), end=' ')
 
-                    for tail in ["_norm.wav", "_vq1.wav", "_vq2.wav", "_vq3.wav", "_vocoder.wav"]:
-                        os.remove(prefix + tail)
+                    for name in ["norm.wav", "vq1.wav", "vq2.wav", "vq3.wav", "vocoder.wav"]:
+                        os.remove(name)
                     
                     count += 1
         
@@ -259,8 +274,39 @@ class Pipeline(ABC):
                 print(self.test_scores[i] / count)
         
         else:
-            logging.error("The testing method should be overwrited when is_speech_resynth == False")
+            logging.error("The testing method should be overwritten when is_speech_resynth == False")
             raise AssertionError
+    
+    
+    def generate(self, audio_path, save_dir, model_name="100.pth.tar"):
+
+        # restore model
+        self.model_path = os.path.join(self.weight_dir, os.path.basename(model_name))
+        checkpoint = torch.load(self.model_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint, strict=True)
+        self.model.eval()
+
+        # vocoder
+        self.vocoder = PWGVocoder(
+            device=self.device,
+            normalize_path='pwg/stats.h5',
+            vocoder_path='pwg/checkpoint-400000steps.pkl'
+        ).to(self.device)
+
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+        
+        # get wav file
+        self.source_y = librosa.core.load(audio_path, sr=self.sr, mono=True)[0] # might be helpful in inference
+        self.source_y = librosa.util.normalize(self.source_y) * 0.9
+        self.source_mel_feature, self.source_spc = compute_mel(self.source_y)
+
+        output_wavs = self.inference(source_path=audio_path) # len = 3 normally
+
+        wavfile.write(os.path.join(save_dir, f"norm.wav"), self.sr, self.source_y)
+        for i in range(len(output_wavs)):
+            wavfile.write(os.path.join(save_dir, f"vq{i+1}.wav"), self.sr, output_wavs[i])
+
     
     @abstractclassmethod
     def train_step(self, idx, batch):
