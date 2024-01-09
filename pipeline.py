@@ -8,7 +8,7 @@ from torch.nn.modules import Module
 
 from utils.base import Pipeline
 from utils.utils import positional_encoding, positional_encoding_by_frame, compute_mel, compute_pitch
-from model import Codec, CodecE
+from model import Codec
 from dataset import NSCDataset
 
 class PM2_pipeline(Pipeline):

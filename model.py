@@ -207,126 +207,6 @@ class ResBlock(nn.Module):
 
         else:
             return x
-        
-
-class ResBlockE(nn.Module):
-    ''' A two-feed-forward-layer module with no transpose (should be performed beforehand) '''
-
-    def __init__(self, latent_dim, temp_downsample_rate=1):
-        super(ResBlockE, self).__init__()
-        self.latent_dim = latent_dim
-        self.kernel_size = 3
-        self.padding = (self.kernel_size - 1) // 2
-        self.frames = 80
-        self.temp_downsample_rate = temp_downsample_rate
-
-        self.res1 = nn.Sequential(
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-            nn.ELU(),
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-        )
-
-        self.res2 = nn.Sequential(
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-            nn.ELU(),
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-        )
-
-        self.lstm_encoder = nn.LSTM(input_size=self.latent_dim, hidden_size=self.latent_dim, batch_first=True) # expected input (batch, frames=80, features=256)
-
-        self.output_linear = nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1)
-
-        # downsample by using stride = 2 convolution once
-        if self.temp_downsample_rate == 2:
-            self.ds = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
-            )
-
-        # downsample by using stride = 2 convolution twice
-        elif self.temp_downsample_rate == 4:
-            self.ds = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
-            )
-
-    
-    def forward(self, x):
-        """
-        x -> res_1 -> res_2 -> output_linear -> downsample -> repeat downsample element
-        """
-
-        out = self.res1(x)
-        x = x + out
-
-        out = self.res2(x)
-        x = x + out
-
-        # lstm layer
-        # x = x.contiguous().transpose(1, 2) # (frames, features)
-        # x, (h, c) = self.lstm_encoder(x)
-        # x = nn.ELU()(x)
-        # x = x.contiguous().transpose(1, 2)
-        x = self.output_linear(x)
-
-        # repeat the downsampled elements so that the length is the same
-        if self.temp_downsample_rate == 2:
-            ds_x = self.ds(x)
-            ds_x = torch.repeat_interleave(ds_x, 2, dim=2)
-            return ds_x, x
-
-        elif self.temp_downsample_rate == 4:
-            ds_x = self.ds(x)
-            ds_x = torch.repeat_interleave(ds_x, 4, dim=2)
-            return ds_x, x
-
-        else:
-            return x
-        
-
-class ResBlockD(nn.Module):
-    ''' A two-feed-forward-layer module with no transpose (should be performed beforehand) '''
-
-    def __init__(self, latent_dim):
-        super(ResBlockD, self).__init__()
-        self.latent_dim = latent_dim
-        self.kernel_size = 3
-        self.padding = (self.kernel_size - 1) // 2
-        self.frames = 80
-
-        self.res1 = nn.Sequential(
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-            nn.ELU(),
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-        )
-
-        self.res2 = nn.Sequential(
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-            nn.ELU(),
-            nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1),
-        )
-
-        self.lstm_encoder = nn.LSTM(input_size=self.latent_dim, hidden_size=self.latent_dim, batch_first=True) # expected input (batch, frames=80, features=256)
-
-        self.input_linear = nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=1, padding=self.padding, dilation=1)
-    
-    def forward(self, x):
-        """
-        x -> res_1 -> res_2 -> output_linear -> downsample -> repeat downsample element
-        """
-
-        x = self.input_linear(x)
-        # x = nn.ELU()(x)
-        # x, (h, c) = self.lstm_encoder(x.transpose(1, 2))
-        # x = x.contiguous().transpose(1, 2)
-
-        out = self.res1(x)
-        x = x + out
-
-        out = self.res2(x)
-        x = x + out
-
-        return x
 
 
 
@@ -573,12 +453,11 @@ class Codec(nn.Module):
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
         return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss, pitch_commit_loss, mag_commit_loss)
+    
+class TransformerCodec(nn.Module):
+    def __init__(self, device='cpu', *args, **kwargs) -> None:
+        super().__init__()
 
-class CodecE(nn.Module):
-
-    def __init__(self, device='cpu'):
-        super(CodecE, self).__init__()
-        
         self.device = device
         # self.input_dim = 513
         self.input_dim = 80 # Yeah, it is the frequencies dimension
@@ -590,11 +469,11 @@ class CodecE(nn.Module):
 
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
             )
         
@@ -602,27 +481,28 @@ class CodecE(nn.Module):
         # input (bins=pitch_dim, frames) -> output (bins=pitch_dims, frames)
         self.pitch_encoder = nn.Sequential(
                 nn.Conv1d(self.pitch_dim, self.reduced_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
         )
 
         self.mag_encoder = nn.Sequential(
                 nn.Conv1d(self.mag_dim, self.reduced_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
         )
 
-        self.res_encoder_block1 = ResBlockE(self.latent_dim, temp_downsample_rate=4)
-        self.res_encoder_block2 = ResBlockE(self.latent_dim, temp_downsample_rate=2)
-        self.res_encoder_block3 = ResBlockE(self.latent_dim)
+        self.res_encoder_block1 = ResBlock(self.latent_dim, temp_downsample_rate=4)
+        self.res_encoder_block2 = ResBlock(self.latent_dim, temp_downsample_rate=2)
+        self.res_encoder_block3 = ResBlock(self.latent_dim)
+
 
         self.vq1 = VectorQuantize(
                         dim = self.latent_dim,
@@ -661,30 +541,29 @@ class CodecE(nn.Module):
         
         # input (bins=pitch_dim, frames) -> output (bins=pitch_dims, frames)
         self.pitch_decoder = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, 3, stride=1, padding=0, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.pitch_dim, 1, stride=1, padding=1, dilation=1),
+                nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.reduced_dim, self.pitch_dim, 1, stride=1, padding=0, dilation=1),
         )
 
         self.mag_decoder = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, 3, stride=1, padding=0, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, 3, stride=1, padding=1, dilation=1),
-                nn.ELU(),
-                nn.Conv1d(self.latent_dim, self.pitch_dim, 1, stride=1, padding=1, dilation=1),
-                nn.ELU(),
+                nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.reduced_dim, self.reduced_dim, 3, stride=1, padding=1, dilation=1),
+                nn.LeakyReLU(),
+                nn.Conv1d(self.reduced_dim, self.pitch_dim, 1, stride=1, padding=0, dilation=1),
         )
-
-        self.res_decoder_block1 = ResBlockD(self.latent_dim)
-        self.res_decoder_block2 = ResBlockD(self.latent_dim)
-        self.res_decoder_block3 = ResBlockD(self.latent_dim)
-
+        
+        
+        self.res_decoder_block1 = ResBlock(self.latent_dim)
+        self.res_decoder_block2 = ResBlock(self.latent_dim)
+        self.res_decoder_block3 = ResBlock(self.latent_dim)
 
         self.fully_connected1 = nn.Sequential(
             nn.Linear(self.latent_dim + self.pitch_dim + self.mag_dim, self.latent_dim),
@@ -707,11 +586,11 @@ class CodecE(nn.Module):
 
         self.decoder_linear = nn.Sequential(
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
-                nn.ELU(),
+                nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.input_dim, 1, stride=1, padding=0, dilation=1)
             )
     
