@@ -12,12 +12,14 @@ from dataset import NSCDataset
 from model import Codec
 
 
-class PM_QUANTIZED(Pipeline):
+class TransformerCodecPipeline(Pipeline):
 
     def __init__(self, model: nn.Module, weight_dir: str, log_dir: str | None, device: str | None = None, gpu_id="0", is_speech_resynth=True, sr=24000):
         super().__init__(model, weight_dir, log_dir, device, gpu_id, is_speech_resynth, sr)
 
         self.loss_len = 8
+        self.BOS = [-1] * 80
+        self.EOS = [-2] * 80
     
     def train_step(self, idx, batch):
 
@@ -132,11 +134,6 @@ class PM_QUANTIZED(Pipeline):
 
         return output_wav1, output_wav2, output_wav3
 
-
-class PM_ENcodec(PM_QUANTIZED):
-
-    def __init__(self, model: nn.Module, weight_dir: str, log_dir: str | None, device: str | None = None, gpu_id="0", is_speech_resynth=True, sr=24000):
-        super().__init__(model, weight_dir, log_dir, device, gpu_id, is_speech_resynth, sr)
 
 if __name__ == '__main__':
 
