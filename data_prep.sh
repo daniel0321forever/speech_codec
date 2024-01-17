@@ -1,2 +1,0 @@
-python3 dataset.py -o /media/daniel0321/LargeFiles/datasets/VCTK/dataset/train_spc_next.pkl
-python3 dataset.py -d /media/daniel0321/LargeFiles/datasets/VCTK/raw_data/test/wav48_silence_trimmed -o /media/daniel0321/LargeFiles/datasets/VCTK/dataset/test_spc_next.pkl

@@ -16,78 +16,7 @@ from vector_quantize_pytorch import VectorQuantize
 sys.path.append(os.path.join(os.path.dirname(__file__), '../AutoSVS'))
 from parallel_wavegan.utils import load_model
 
-import h5py
-def read_hdf5(hdf5_name, hdf5_path):
-    """Read hdf5 dataset.
 
-    Args:
-        hdf5_name (str): Filename of hdf5 file.
-        hdf5_path (str): Dataset name in hdf5 file.
-
-    Return:
-        any: Dataset values.
-
-    """
-    if not os.path.exists(hdf5_name):
-        logging.error(f"There is no such a hdf5 file ({hdf5_name}).")
-        sys.exit(1)
-
-    hdf5_file = h5py.File(hdf5_name, "r")
-
-    if hdf5_path not in hdf5_file:
-        logging.error(f"There is no such a data in hdf5 file. ({hdf5_path})")
-        sys.exit(1)
-
-    hdf5_data = hdf5_file[hdf5_path][()]
-    hdf5_file.close()
-
-    return hdf5_data
-
-class PWGVocoder(nn.Module):
-    def __init__(self, device, normalize_path, vocoder_path):
-        super(PWGVocoder, self).__init__()
-        
-        self.device = device
-        self.normalize_mean = torch.tensor(read_hdf5(normalize_path, "mean")).to(self.device)
-        self.normalize_scale = torch.tensor(read_hdf5(normalize_path, "scale")).to(self.device)
-
-        self.vocoder = load_model(vocoder_path)
-        self.vocoder.remove_weight_norm()
-        self.vocoder = self.vocoder.eval().to(self.device)
-
-
-        # stat_data = np.load(normalize_path)
-
-        # self.normalize_mean = torch.tensor(stat_data[0]).to(self.device)
-        # self.normalize_scale = torch.tensor(stat_data[1]).to(self.device)
-
-        # Freeze vocoder weight
-        for p in self.vocoder.parameters():
-            p.requires_grad = False
-
-        self.max_vocoder_segment_length = 400
-
-    def forward(self, spec_output, output_all=False):
-        # Go through the vocoder to generate waveform
-        spec_output_norm = (spec_output - self.normalize_mean) / self.normalize_scale
-        # print (self.normalize_mean, self.normalize_scale)
-
-        # Pick at most "self.max_vocoder_segment_length" frames, in order to avoid CUDA OOM.
-        # x is the random noise for vocoder
-        if spec_output_norm.shape[1] > self.max_vocoder_segment_length and output_all == False:
-            start_frame = int(torch.rand(1) * (spec_output_norm.shape[1] - self.max_vocoder_segment_length))
-            end_frame = start_frame + self.max_vocoder_segment_length
-            spec_for_vocoder = torch.nn.ReplicationPad1d(2)(spec_output_norm[:,start_frame:end_frame,:].transpose(1, 2))
-            x = torch.randn(spec_output_norm.shape[0], 1, self.max_vocoder_segment_length * self.vocoder.upsample_factor).to(self.device)
-        else:
-            start_frame = 0
-            spec_for_vocoder = torch.nn.ReplicationPad1d(2)(spec_output_norm.transpose(1, 2))
-            x = torch.randn(spec_output_norm.shape[0], 1, spec_output_norm.shape[1] * self.vocoder.upsample_factor).to(self.device)
-        
-        # print (x.shape, spec_output_norm.transpose(1, 2).shape)
-        waveform_output = self.vocoder(x, spec_for_vocoder).squeeze(1)
-
-        return waveform_output, start_frame
 
 class MelResCodec(nn.Module):
     def __init__(self, device='cpu'):

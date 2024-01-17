@@ -1,2 +1,0 @@
-PESQ1 (No residual):1.811829588274337, PESQ2 (add layer 2 residual data) 1.9092167675670972, PESQ3 (add layer 2, 3 residual data1.8391415612843536
- No resynthesis vocoder3.4490062903096366, Max PESQ score: 4.548638343811035

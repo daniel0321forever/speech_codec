@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from model import Codec, PWGVocoder, MelResCodec
+from orig_model import Codec, PWGVocoder, MelResCodec
 from dataset import NSCDataset
 
 from torchaudio.transforms import Spectrogram

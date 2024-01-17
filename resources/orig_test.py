@@ -13,9 +13,9 @@ from torch.utils.data import Dataset, DataLoader
 
 from tqdm import tqdm
 
-from model import Codec, PWGVocoder
-from dataset import NSCDataset, compute_mel
-from pipeline import get_param_num
+from orig_model import Codec, PWGVocoder
+from orig_dataset import NSCDataset, compute_mel
+from orig_train import get_param_num
 
 frame_per_second = 200.0
 sample_rate = 24000
