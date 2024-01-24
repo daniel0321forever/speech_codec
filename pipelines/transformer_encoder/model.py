@@ -191,8 +191,8 @@ class CodecT(nn.Module):
         self.combined_dim = self.latent_dim * 3
         self.frames = 80
         self.batch_size = 16
-        self.bos = torch.ones(self.batch_size, 1, self.latent_dim)
-        self.eos = torch.zeros(self.batch_size, 1, self.latent_dim)
+        self.bos = torch.ones(self.batch_size, 1, self.latent_dim * 3).to(self.device)
+        self.eos = torch.zeros(self.batch_size, 1, self.latent_dim * 3).to(self.device)
 
         mask = (torch.triu(torch.ones(self.frames, self.frames)) == 1).transpose(0, 1)
         self.mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
@@ -308,6 +308,10 @@ class CodecT(nn.Module):
 
     def decoder(self, combined_input, x1_quantize_residual_input, x2_quantize_residual_input, x1_quantized, x2_quantized,  x3_quantized):
         # the right shift is done by pipeline as it would provide a BOS at first
+
+        # new mask
+        mask = (torch.triu(torch.ones(combined_input.shape[1], combined_input.shape[1])) == 1).transpose(0, 1)
+        self.mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
 
         # decode x1
         x1_decoded = self.res_decoder_block3(combined_input, x1_quantized, self.mask) # (frames, feats)

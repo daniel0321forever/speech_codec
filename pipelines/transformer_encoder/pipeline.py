@@ -119,31 +119,34 @@ class TransformerCodecPipeline(Pipeline):
                 mag_input = torch.tensor(mag_segments[i]).unsqueeze(0).to(self.device)
                 
                 x1_quantized, x2_quantized, x3_quantized = model.encoder(model_input, pitch_input, mag_input)
-                bos = model.bos
+                bos = model.bos[:1]
 
-                combined_input = bos
-                x1_residual_input = bos
-                x2_residual_input = bos
+                combined_input = bos.to(self.device)
+                x1_residual_input = bos.to(self.device)
+                x2_residual_input = bos.to(self.device)
+
                 for frame in range(x1_quantized.shape[1]):
                     model_output_list = model.decoder(
                         combined_input=combined_input,
                         x1_quantize_residual_input=x1_residual_input,
                         x2_quantize_residual_input=x2_residual_input,
+                        x1_quantized=x1_quantized, 
+                        x2_quantized=x2_quantized,
+                        x3_quantized=x3_quantized,
                     )
+                    
+                    model_output, decoder_inputs = model_output_list
+                    new_combined =  decoder_inputs[0]
+                    new_x1_res = decoder_inputs[1] - decoder_inputs[0]
+                    new_x2_res = decoder_inputs[2] - decoder_inputs[1]
 
-                    new_combined =  model_output_list[3]
-                    new_x1_res = model_output_list[4] - model_output_list[3]
-                    new_x2_res = model_output_list[5] - model_output_list[4]
-
-                    combined_input = torch.concat([combined_input, new_combined[:, -1, :]], dim=1)
-                    x1_residual_input = torch.concat([x1_residual_input, new_x1_res[:, -1, :]], dim=1)
-                    x2_residual_input = torch.concat([x2_residual_input, new_x2_res[:, -1, :]], dim=1)
+                    combined_input = torch.concat([combined_input, new_combined[:, -1:, :]], dim=1)
+                    x1_residual_input = torch.concat([x1_residual_input, new_x1_res[:, -1:, :]], dim=1)
+                    x2_residual_input = torch.concat([x2_residual_input, new_x2_res[:, -1:, :]], dim=1)
                 
-                print(model_output_list[0].shape)
-
-                waveform_output_vq1, _ = self.vocoder(model_output_list[0], output_all=True)
-                waveform_output_vq2, _ = self.vocoder(model_output_list[1], output_all=True)
-                waveform_output_vq3, _ = self.vocoder(model_output_list[2], output_all=True)
+                waveform_output_vq1, _ = self.vocoder(model_output[0], output_all=True)
+                waveform_output_vq2, _ = self.vocoder(model_output[1], output_all=True)
+                waveform_output_vq3, _ = self.vocoder(model_output[2], output_all=True)
                 pred_list_vq1.append(waveform_output_vq1[0].cpu())
                 pred_list_vq2.append(waveform_output_vq2[0].cpu())
                 pred_list_vq3.append(waveform_output_vq3[0].cpu())
