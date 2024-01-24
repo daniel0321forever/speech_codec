@@ -7,9 +7,9 @@ from torch import nn
 from torch.nn.modules import Module
 
 from utils.base import Pipeline
-from utils.utils import positional_encoding, positional_encoding_by_frame, compute_mel, compute_pitch
+from utils.utils import compute_mel, compute_pitch
 from dataset import NSCDataset
-from model import Codec
+from model import CodecT
 
 
 class TransformerCodecPipeline(Pipeline):
@@ -17,9 +17,7 @@ class TransformerCodecPipeline(Pipeline):
     def __init__(self, model: nn.Module, weight_dir: str, log_dir: str | None, device: str | None = None, gpu_id="0", is_speech_resynth=True, sr=24000):
         super().__init__(model, weight_dir, log_dir, device, gpu_id, is_speech_resynth, sr)
 
-        self.loss_len = 8
-        self.BOS = [-1] * 80
-        self.EOS = [-2] * 80
+        self.loss_len = 6 # total kinds of loss recorded on tensorboard
     
     def train_step(self, idx, batch):
 
@@ -36,17 +34,19 @@ class TransformerCodecPipeline(Pipeline):
             mel_loss_list[i] = self.criteria(model_output_list[i], mel_input)
             self.train_loss[i] += mel_loss_list[i].item()
         
-        for i in range(5):
+        for i in range(self.loss_len - 3):
             self.train_loss[i+3] += commit_loss_list[i].item()
 
 
         if idx % 4000 == 0:
-            print('mel loss: {:.4f} {:.4f} {:.4f}; commit loss: {:.4f} {:.4f} {:.4f}'.format(
-                    mel_loss_list[0].item(), mel_loss_list[1].item(), mel_loss_list[2].item(),
-                    commit_loss_list[0].item(), commit_loss_list[1].item(), commit_loss_list[2].item()), commit_loss_list[3].item(), commit_loss_list[4].item())
-            
+            print("mel loss: ", end="")
+            for i in range(3):
+                print(mel_loss_list[i].item(), end=" ")
+            print("commit loss: ", end="")
+            for i in range(self.loss_len - 3):
+                print(commit_loss_list[i].item(), end=" ")
         
-        t_l = mel_loss_list[0] + mel_loss_list[1] * 0.2 + mel_loss_list[2] * 0.04 + commit_loss_list[0] + commit_loss_list[1] * 0.2 + commit_loss_list[2] * 0.04 + commit_loss_list[3] * 8 + commit_loss_list[4] * 8
+        t_l = mel_loss_list[0] + mel_loss_list[1] * 0.2 + mel_loss_list[2] * 0.04 + commit_loss_list[0] + commit_loss_list[1] * 0.2 + commit_loss_list[2] * 0.04
         t_l.backward()
 
         # gradient = gradient * coeff (< 1)
@@ -82,7 +82,7 @@ class TransformerCodecPipeline(Pipeline):
         mag = np.array([[mag[frame][max_mag_idx[frame]]] for frame in range(len(mag))])
 
         # slice data
-        sample_size = 200
+        sample_size = 80
         mel_segments = []
         pitch_segments = []
         mag_segments = []
@@ -114,12 +114,32 @@ class TransformerCodecPipeline(Pipeline):
         with torch.no_grad():
             for i in range(len(mel_segments)):
                 model_input = torch.tensor(mel_segments[i]).unsqueeze(0).to(self.device)
-                pitch_input = positional_encoding(torch.tensor(pitch_segments[i]).unsqueeze(0)).to(self.device)
-                mag_input = positional_encoding(torch.tensor(mag_segments[i]).unsqueeze(0)).to(self.device)
+
+                pitch_input = torch.tensor(pitch_segments[i]).unsqueeze(0).to(self.device)
+                mag_input = torch.tensor(mag_segments[i]).unsqueeze(0).to(self.device)
                 
-                model_input = torch.log(model_input + 1e-10)
+                x1_quantized, x2_quantized, x3_quantized = model.encoder(model_input, pitch_input, mag_input)
+                bos = model.bos
+
+                combined_input = bos
+                x1_residual_input = bos
+                x2_residual_input = bos
+                for frame in range(x1_quantized.shape[1]):
+                    model_output_list = model.decoder(
+                        combined_input=combined_input,
+                        x1_quantize_residual_input=x1_residual_input,
+                        x2_quantize_residual_input=x2_residual_input,
+                    )
+
+                    new_combined =  model_output_list[3]
+                    new_x1_res = model_output_list[4] - model_output_list[3]
+                    new_x2_res = model_output_list[5] - model_output_list[4]
+
+                    combined_input = torch.concat([combined_input, new_combined[:, -1, :]], dim=1)
+                    x1_residual_input = torch.concat([x1_residual_input, new_x1_res[:, -1, :]], dim=1)
+                    x2_residual_input = torch.concat([x2_residual_input, new_x2_res[:, -1, :]], dim=1)
                 
-                model_output_list, commit_loss_list = model(model_input, pitch_input, mag_input)
+                print(model_output_list[0].shape)
 
                 waveform_output_vq1, _ = self.vocoder(model_output_list[0], output_all=True)
                 waveform_output_vq2, _ = self.vocoder(model_output_list[1], output_all=True)
@@ -139,19 +159,19 @@ if __name__ == '__main__':
 
     data_root_dir = "/media/daniel0321/LargeFiles/datasets/VCTK"
     pipeline_dir = "."
-    model = Codec()
+    model = CodecT()
 
-    pipeline = PM_QUANTIZED(
+    pipeline = TransformerCodecPipeline(
         model=model,
         weight_dir="models",
         log_dir = "logger",
     )
 
-    pipeline.train(
-        train_set_path = os.path.join(data_root_dir, "dataset/train_spc.pkl"),
-        test_set_path = os.path.join(data_root_dir, "dataset/test_spc.pkl"),
-        batch_size=16,
-    )
+    # pipeline.train(
+    #     train_set_path = os.path.join(data_root_dir, "dataset/train_spc.pkl"),
+    #     test_set_path = os.path.join(data_root_dir, "dataset/test_spc.pkl"),
+    #     batch_size=16,
+    # )
 
     pipeline.test("/media/daniel0321/LargeFiles/datasets/VCTK/raw_data/test/wav48_silence_trimmed/")
 

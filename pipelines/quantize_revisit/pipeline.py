@@ -66,7 +66,7 @@ class PM2_pipeline(Pipeline):
         
         # get input
         y = self.source_y
-        mel = self.source_mel_feature
+        mel = self.source_mel_feature # weird
 
         pitch, mag = compute_pitch(y)
         max_mag_idx = np.argmax(mag, axis=1)    
@@ -74,7 +74,7 @@ class PM2_pipeline(Pipeline):
         mag = np.array([[mag[frame][max_mag_idx[frame]]] for frame in range(len(mag))])
 
         # slice data
-        sample_size = 200
+        sample_size = 200 # weird
         mel_segments = []
         pitch_segments = []
         mag_segments = []

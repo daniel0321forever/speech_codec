@@ -17,6 +17,9 @@ from vector_quantize_pytorch import VectorQuantize
 sys.path.append(os.path.join(os.path.dirname(__file__), '../AutoSVS'))
 from parallel_wavegan.utils import load_model
 
+from utils.utils import PositionalEncoding
+
+
 import h5py
 def read_hdf5(hdf5_name, hdf5_path):
     """Read hdf5 dataset.
@@ -103,9 +106,13 @@ class EncoderBlock(nn.Module):
         super().__init__(*args, **kwargs)
         self.heads = heads
         self.latent_dim = latent_dim
+        self.kernel_size = 3
+        self.padding = (self.kernel_size - 1) // 2
+        self.temp_downsample_rate = temp_downsample_rate
 
-        encoder_layer = nn.TransformerEncoderLayer(d_model=latent_dim, nhead=heads, dim_feedforward=latent_dim, norm_first=True)
-        self.res_encoder = nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=4, norm=nn.LayerNorm)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=latent_dim, nhead=heads, dim_feedforward=latent_dim, norm_first=True, batch_first=True)
+        layer_norm = nn.LayerNorm(self.latent_dim)
+        self.res_encoder = nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=4, norm=layer_norm)
 
         # downsample by using stride = 2 convolution once
         if self.temp_downsample_rate == 2:
@@ -121,7 +128,7 @@ class EncoderBlock(nn.Module):
                 nn.Conv1d(self.latent_dim, self.latent_dim, self.kernel_size, stride=2, padding=self.padding, dilation=1),
             )
 
-    def forward(self, x, src_mask):
+    def forward(self, x, src_mask=None):
         
         """
         @parameters
@@ -131,19 +138,21 @@ class EncoderBlock(nn.Module):
         """
 
         # src_mask get its name for being the mask for encoder input
-        output = self.res_encoder(x, src_key_padding_mask=src_mask)
+        output = self.res_encoder(x, src_mask)
         output = output.transpose(1, 2).contiguous()
 
         # repeat the downsampled elements so that the length is the same
         if self.temp_downsample_rate == 2:
             downsampled = self.downsample_layers(output)
             downsampled = torch.repeat_interleave(downsampled, 2, dim=2)
+            downsampled = downsampled.transpose(1, 2).contiguous()
             output = output.transpose(1, 2).contiguous()
             return downsampled, output
 
         elif self.temp_downsample_rate == 4:
             downsampled = self.downsample_layers(output)
             downsampled = torch.repeat_interleave(downsampled, 4, dim=2)
+            downsampled = downsampled.transpose(1, 2).contiguous()
             output = output.transpose(1, 2).contiguous()
             return downsampled, output
 
@@ -154,18 +163,20 @@ class EncoderBlock(nn.Module):
 class DecoderBlock(nn.Module):
     def __init__(self, heads, latent_dim):
         super(DecoderBlock, self).__init__()
+        self.latent_dim = latent_dim
         
-        decoderLayer = nn.TransformerDecoderLayer(d_model=latent_dim, nhead=heads, dim_feedforward=latent_dim, norm_first=True)
-        self.res_decoder = nn.TransformerDecoder(decoder_layer=decoderLayer, num_layers=4, norm=nn.LayerNorm)
+        decoderLayer = nn.TransformerDecoderLayer(d_model=latent_dim, nhead=heads, dim_feedforward=latent_dim, norm_first=True, batch_first=True)
+        layer_norm = nn.LayerNorm(self.latent_dim)
+        self.res_decoder = nn.TransformerDecoder(decoder_layer=decoderLayer, num_layers=4, norm=layer_norm)
 
-    def forward(self, x, enc_output, tgt_mask, tgt_padding_mask=None, enc_output_mask=None):
+    def forward(self, x, enc_output, tgt_mask, tgt_pad_mask=None, src_pad_mask=None):
         """
         @parameters
             tgt_mask: The tgt mask would also handle the padding element in decoder input, while also shield the input that could not be foresee by decoder
-            enc_output_mask: The enc_output_mask is for the map for memory
+            src_pad_mask: The src_pad_mask is for the map for memory
         """
         # propogation
-        output = self.res_decoder(tgt=x, memory=enc_output, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_padding_mask, memory_mask=enc_output_mask)
+        output = self.res_decoder(tgt=x, memory=enc_output, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_pad_mask, memory_mask=src_pad_mask)
 
         return output
 
@@ -175,12 +186,20 @@ class CodecT(nn.Module):
         
         self.device = device
         self.heads = 4
-        self.input_dim = 80 # Yeah, it is the frequencies dimension
+        self.input_dim = 80
         self.latent_dim = 256
         self.combined_dim = self.latent_dim * 3
         self.frames = 80
-        self.pitch_dim = 64
-        self.mag_dim = 64
+        self.batch_size = 16
+        self.bos = torch.ones(self.batch_size, 1, self.latent_dim)
+        self.eos = torch.zeros(self.batch_size, 1, self.latent_dim)
+
+        mask = (torch.triu(torch.ones(self.frames, self.frames)) == 1).transpose(0, 1)
+        self.mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        
+        self.pitch_embed = nn.Linear(1, self.latent_dim)
+        self.mag_embed = nn.Linear(1, self.latent_dim)
+        self.positional_encoding = PositionalEncoding(self.latent_dim)
 
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
@@ -191,7 +210,7 @@ class CodecT(nn.Module):
             )
 
         self.pitch_encoder_linear = nn.Sequential(
-                nn.Conv1d(self.pitch_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -199,7 +218,7 @@ class CodecT(nn.Module):
             )
 
         self.mag_encoder_linear = nn.Sequential(
-                nn.Conv1d(self.pitch_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -249,96 +268,60 @@ class CodecT(nn.Module):
                 nn.Conv1d(self.latent_dim, self.input_dim, 1, stride=1, padding=0, dilation=1)
             )
     
-    
-    def generate_mask(self, src, tgt):
-        src_pad_mask = (src != 0).unsqueeze(1).unsqueeze(2)
-        tgt_pad_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
-        seq_length = tgt.size(1)
-        tgt_mask = (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1)).bool()
-        return src_pad_mask, tgt_pad_mask, tgt_mask
+    def right_shift(self, x):
+        right_shifted = torch.concat([self.bos, x[:, :-1]], dim=1)
+        return right_shifted
+
     
     def encoder(self, x, pitch, mag):
         # transmit the compressed values (code book index of each input vector) to decoder
         # transmit the quantized tensor (decoded tensor) to the next level
 
-        x = x.contiguous().transpose(1, 2) # (freq, frames)
-        x = self.encoder_linear(x)
-
-        # First CNN + VQ compressor
-        ds_x1, x1 = self.res_encoder_block1(x)
-        x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1.transpose(1, 2))
-        x1_quantized = x1_quantized.transpose(1, 2) 
-        x1_quantize_residual = x1 - x1_quantized
-
-        ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual)
-        x2_quantized, x2_indices, x2_commit_loss = self.vq2(ds_x2.transpose(1, 2))
-        x2_quantized = x2_quantized.transpose(1, 2)
-        x2_quantize_residual = x2 - x2_quantized
-
-        x3 = self.res_encoder_block3(x2_quantize_residual)
-        x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3.transpose(1, 2))
-        x3_quantized = x3_quantized.transpose(1, 2)
-
-        # decode pitch, mag
-        pitch = self.pitch_encoder(pitch.transpose(1, 2)) # (64, 80)
-        pitch_quantized, pitch_indices, pitch_commit_loss = self.vq_pitch(pitch)
-        pitch_quantized = pitch_quantized.transpose(1, 2) # (80, 64)
-        # mag = self.mag_decoder(mag.transpose(1, 2)) # (64, 80)
-
-        return x1_indices, x2_indices, x3_indices, pitch_indices
-
-    def forward(self, x: torch.Tensor, pitch: torch.Tensor, mag: torch.Tensor):
-
-
-        # TODO: x should be index encoded
-        # TODO: should probably right shift the decoder
-
         x = self.encoder_linear(x.transpose(1, 2)) # transpose the input into (bins, frames) and perform linear encoding
         x = x.contiguous().transpose(1, 2) # transpose back into (frames, bins)
 
+        pitch = self.pitch_embed(pitch)
+        pitch = self.positional_encoding(pitch)
         pitch = self.pitch_encoder_linear(pitch.transpose(1, 2))
         pitch = pitch.contiguous().transpose(1, 2)
 
+        mag = self.mag_embed(mag)
+        mag = self.positional_encoding(mag)
         mag = self.mag_encoder_linear(mag.transpose(1, 2))
         mag = mag.contiguous().transpose(1, 2)
 
         combined = torch.concat([x, pitch, mag], dim=-1)
 
         # First CNN + VQ compressor
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x, x)
-        ds_x1, x1 = self.res_encoder_block1(x, src_pad_mask) # shape (frames, feats)
+        ds_x1, x1 = self.res_encoder_block1(combined) # shape (frames, feats)
         x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1) # (frames, feats)
         x1_quantize_residual = x1 - x1_quantized # shape (frames=80, feats=256)
 
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x1_quantize_residual, x1_quantize_residual)
-        ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual, src_pad_mask)
+        ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual)
         x2_quantized, x2_indices, x2_commit_loss = self.vq2(ds_x2)
         x2_quantize_residual = x2 - x2_quantized
 
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x2_quantize_residual, x2_quantize_residual)
-        x3 = self.res_encoder_block3(x2_quantize_residual, src_pad_mask)
-        x3_quantized, x3_indices, x3_commit_loss = self.vq3() # shape (frames=80, feats=256)
+        x3 = self.res_encoder_block3(x2_quantize_residual)
+        x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3) # shape (frames=80, feats=256)
 
-        
+        return x1_quantized, x2_quantized, x3_quantized
+
+    def decoder(self, combined_input, x1_quantize_residual_input, x2_quantize_residual_input, x1_quantized, x2_quantized,  x3_quantized):
+        # the right shift is done by pipeline as it would provide a BOS at first
+
         # decode x1
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x1_quantized, x)
-        x1_decoded = self.res_decoder_block3(x, x1_quantized, tgt_mask, tgt_pad_mask, src_pad_mask) # (frames, feats)
+        x1_decoded = self.res_decoder_block3(combined_input, x1_quantized, self.mask) # (frames, feats)
 
-        # decode x2:
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x2_quantized, x1_quantize_residual)
-        x2_decoded = self.res_decoder_block2(x1_quantize_residual, x2_quantized, tgt_mask, tgt_pad_mask, src_pad_mask) # (frames, feats)
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x2_decoded + x1_decoded, x)
-        x2_decoded = self.res_decoder_block2(x, x2_decoded + x1_decoded, tgt_mask, tgt_pad_mask, src_pad_mask) # (frames, feats)
+        # decode x2
+        x2_decoded = self.res_decoder_block2(x1_quantize_residual_input, x2_quantized, self.mask) # (frames, feats)
+        x2_decoded = self.res_decoder_block3(combined_input, x2_decoded + x1_decoded, self.mask) # (frames, feats)
 
-        # decode x3 (The flow written in the report)
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x3_quantized, x2_quantize_residual)
-        x3_decoded = self.res_decoder_block2(x2_quantize_residual, x3_quantized, tgt_mask, tgt_pad_mask, src_pad_mask) # (frames, feats)
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x3_decoded + x2_decoded, x1_quantize_residual)
-        x3_decoded = self.res_decoder_block2(x1_quantize_residual, x3_decoded + x2_decoded, tgt_mask, tgt_pad_mask, src_pad_mask) # (frames, feats)
-        src_pad_mask, tgt_pad_mask, tgt_mask = self.generate_mask(x3_decoded + x1_decoded, x)
-        x3_decoded = self.res_decoder_block2(x, x3_decoded + x1_decoded, tgt_mask, tgt_pad_mask, src_pad_mask) # (frames, feats)
+        # decode x3
+        x3_decoded = self.res_decoder_block1(x2_quantize_residual_input, x3_quantized, self.mask) # (frames, feats)
+        x3_decoded = self.res_decoder_block2(x1_quantize_residual_input, x3_decoded + x2_decoded, self.mask) # (frames, feats)
+        x3_decoded = self.res_decoder_block3(combined_input, x3_decoded + x1_decoded, self.mask) # (frames, feats)
 
-        x1_decoded_output = self.decoder_linear(x1_decoded.transpose(1, 2)) # (latent_feats=256, frames)
+        x1_decoded_output = self.decoder_linear(x1_decoded.transpose(1, 2)) # (latent_feats=256*3, frames)
         x1_decoded_output = x1_decoded_output.contiguous().transpose(1, 2) # (frames, latent_feats)
 
         x2_decoded_output = self.decoder_linear(x2_decoded.transpose(1, 2))
@@ -347,5 +330,61 @@ class CodecT(nn.Module):
         x3_decoded_output = self.decoder_linear(x3_decoded.transpose(1, 2))
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
-        return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss, pitch_commit_loss, mag_commit_loss)
+        return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_decoded, x2_decoded, x3_decoded)
+
+    def forward(self, x: torch.Tensor, pitch: torch.Tensor, mag: torch.Tensor):
+
+
+        # TODO: should probably right shift the decoder
+
+        x = self.encoder_linear(x.transpose(1, 2)) # transpose the input into (bins, frames) and perform linear encoding
+        x = x.contiguous().transpose(1, 2) # transpose back into (frames, bins)
+
+        pitch = self.pitch_embed(pitch)
+        pitch = self.positional_encoding(pitch)
+        pitch = self.pitch_encoder_linear(pitch.transpose(1, 2))
+        pitch = pitch.contiguous().transpose(1, 2)
+
+        mag = self.mag_embed(mag)
+        mag = self.positional_encoding(mag)
+        mag = self.mag_encoder_linear(mag.transpose(1, 2))
+        mag = mag.contiguous().transpose(1, 2)
+
+        combined = torch.concat([x, pitch, mag], dim=-1)
+
+        # First CNN + VQ compressor
+        ds_x1, x1 = self.res_encoder_block1(combined) # shape (frames, feats)
+        x1_quantized, x1_indices, x1_commit_loss = self.vq1(ds_x1) # (frames, feats)
+        x1_quantize_residual = x1 - x1_quantized # shape (frames=80, feats=256)
+
+        ds_x2, x2 = self.res_encoder_block2(x1_quantize_residual)
+        x2_quantized, x2_indices, x2_commit_loss = self.vq2(ds_x2)
+        x2_quantize_residual = x2 - x2_quantized
+
+        x3 = self.res_encoder_block3(x2_quantize_residual)
+        x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3) # shape (frames=80, feats=256)
+
+        
+        # decode x1
+        x1_decoded = self.res_decoder_block3(self.right_shift(combined), x1_quantized, self.mask) # (frames, feats)
+
+        # decode x2
+        x2_decoded = self.res_decoder_block2(self.right_shift(x1_quantize_residual), x2_quantized, self.mask) # (frames, feats)
+        x2_decoded = self.res_decoder_block3(self.right_shift(combined), x2_decoded + x1_decoded, self.mask) # (frames, feats)
+
+        # decode x3
+        x3_decoded = self.res_decoder_block1(self.right_shift(x2_quantize_residual), x3_quantized, self.mask) # (frames, feats)
+        x3_decoded = self.res_decoder_block2(self.right_shift(x1_quantize_residual), x3_decoded + x2_decoded, self.mask) # (frames, feats)
+        x3_decoded = self.res_decoder_block3(self.right_shift(combined), x3_decoded + x1_decoded, self.mask) # (frames, feats)
+
+        x1_decoded_output = self.decoder_linear(x1_decoded.transpose(1, 2)) # (latent_feats=256*3, frames)
+        x1_decoded_output = x1_decoded_output.contiguous().transpose(1, 2) # (frames, latent_feats)
+
+        x2_decoded_output = self.decoder_linear(x2_decoded.transpose(1, 2))
+        x2_decoded_output = x2_decoded_output.contiguous().transpose(1, 2)
+
+        x3_decoded_output = self.decoder_linear(x3_decoded.transpose(1, 2))
+        x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
+        
+        return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss)
     

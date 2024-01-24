@@ -1,5 +1,9 @@
 import torch
-from torch import nn, tensor
+import math
+from torch import nn, tensor, Tensor
 
-a = tensor([[0.1, 0.4, 0.5], [0.3, 0.6, 0.8], [0.1, 0.2, 0.1]])
-print(a.max(1)) # values, indices
+bos = torch.zeros(16, 1, 256)
+x  = torch.ones(16, 80, 256)
+
+concat = torch.concat([bos, x[:, :-1]], dim=1)
+print(concat.shape)

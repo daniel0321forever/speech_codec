@@ -1,4 +1,7 @@
+import logging, os, sys
+
 import torch
+from torch import nn
 import math
 import numpy as np
 import librosa
@@ -41,86 +44,26 @@ def read_hdf5(hdf5_name, hdf5_path):
 
     return hdf5_data
 
-def positional_encoding(pitch_array: torch.Tensor, dim=64, is_batch = True):
-    """
-    returns
-        (batch_size, frames, seq_len)
-    
-    params
-        - pitch_array: an shape (batch_size, frames, 1) array that include the pitch number in each frame of a batch
-    """
+class PositionalEncoding(nn.Module):
 
-    seq_len = dim
-    n = 10000
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 80):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
 
-    even = lambda k, i: math.sin(k / (n ** (2 * i / seq_len)))
-    odd = lambda k, i: math.cos(k / (n ** (2 * i / seq_len)))
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
 
-    pe = []
-
-    if is_batch == False:
-        for k in pitch_array:
-            pe.append([])
-            k = k.item()
-
-            for idx in range(seq_len):
-                i = idx // 2
-
-                p_ki = even(k, i) if idx % 2 == 0 else odd(k, i)
-                pe[-1].append(p_ki)
-        
-        pe = torch.tensor(pe)
-
-        return pe
-
-    for batch in pitch_array:
-        pe.append([])
-        for k in batch:
-            pe[-1].append([])
-            k = k.item()
-            
-            for idx in range(seq_len):
-                i = idx //2
-
-                p_ki = even(k, i) if idx % 2 == 0 else odd(k, i)
-                pe[-1][-1].append(p_ki)
-
-    pe = torch.tensor(pe)
-
-    return pe
-
-def positional_encoding_by_frame(pitch_array: torch.Tensor):
-    """
-    returns
-        (batch_size, frames, seq_len + 1)
-    
-    params
-        - pitch_array: an shape (batch_size, frames, 1) array that include the pitch number in each frame of a batch
-    """
-
-    seq_len = 64
-    n = 10000
-
-    even = lambda k, i: math.sin(k / (n ** (2 * i / seq_len)))
-    odd = lambda k, i: math.cos(k / (n ** (2 * i / seq_len)))
-
-    encoded_array = []
-    for batch in pitch_array:
-        encoded_array.append([])
-        for k in range(len(batch)):
-            encoded_array[-1].append([])
-            
-            pitch = batch[k].item()
-            encoded_array[-1][-1].append(pitch)
-
-            for idx in range(seq_len):
-                i = idx //2
-                p_ki = even(k, i) if idx % 2 == 0 else odd(k, i)
-                encoded_array[-1][-1].append(p_ki)
-
-    encoded_array = torch.tensor(encoded_array)
-
-    return encoded_array
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Arguments:
+            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
+        """
+        x = x + self.pe[:, :x.size(1)]
+        return self.dropout(x)
 
 def compute_mel(y):
     

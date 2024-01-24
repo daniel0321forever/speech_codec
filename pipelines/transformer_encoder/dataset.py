@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from torch.utils.data import Dataset, DataLoader
 
-from utils.utils import compute_pitch, compute_mel, positional_encoding
+from utils.utils import compute_pitch, compute_mel
 
 sample_rate = 24000
 fft_size = 2048
@@ -95,17 +95,12 @@ class NSCDataset(Dataset):
                         cur_pitch = np.array(np.pad(cur_pitch, pad_width=((0, padding_length), (0, 0)), constant_values=0))
                         cur_mag = np.array(np.pad(cur_mag, pad_width=((0, padding_length), (0, 0)), constant_values=0))
 
-                    cur_pitch = positional_encoding(cur_pitch, is_batch=False)
-                    cur_mag = positional_encoding(cur_mag, is_batch=False)
 
                     self.mel_spec_list.append(cur_data)
                     # self.linear_spc_list.append(cur_spc)
                     self.pitch_list.append(cur_pitch)
                     self.mag_list.append(cur_mag)
                     # self.singer_name_list.append(singer_name)
-
-        # self.pitch_list = positional_encoding(self.pitch_list)
-        # self.mag_list = positional_encoding(self.mag_list)
 
     def __len__(self):
         return len(self.mel_spec_list)
