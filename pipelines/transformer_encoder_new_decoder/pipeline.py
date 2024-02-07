@@ -7,7 +7,7 @@ from torch import nn
 from torch.nn.modules import Module
 
 from utils.base import Pipeline
-from utils.utils import compute_mel, compute_pitch
+from utils.utils import compute_mel, compute_pitch, positional_encode
 from dataset import NSCDataset
 from model import CodecT
 
@@ -31,7 +31,8 @@ class TransformerCodecPipeline(Pipeline):
         mel_loss_list = [None] * 3
         
         for i in range(3):
-            mel_loss_list[i] = self.criteria(model_output_list[i], mel_input)
+            combined_input = torch.concat([mel_input, pitch, mag], dim=-1)
+            mel_loss_list[i] = self.criteria(model_output_list[i],  combined_input)
             self.train_loss[i] += mel_loss_list[i].item()
         
         for i in range(self.loss_len - 3):
@@ -39,19 +40,19 @@ class TransformerCodecPipeline(Pipeline):
 
 
         if idx % 4000 == 0:
-            print("mel loss: ", end="")
+            print("mel loss: ")
             for i in range(3):
-                print(mel_loss_list[i].item(), end=" ")
-            print("commit loss: ", end="")
+                print(mel_loss_list[i].item())
+            print("commit loss: ")
             for i in range(self.loss_len - 3):
-                print(commit_loss_list[i].item(), end=" ")
+                print(commit_loss_list[i].item())
         
+        # ! modified
         t_l = mel_loss_list[0] + mel_loss_list[1] * 0.2 + mel_loss_list[2] * 0.04 + commit_loss_list[0] + commit_loss_list[1] * 0.2 + commit_loss_list[2] * 0.04
         t_l.backward()
 
         # gradient = gradient * coeff (< 1)
-        nn.utils.clip_grad_norm_(
-                self.model.parameters(), 1.0)
+        nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
         self.optimizer.step()
 
@@ -67,10 +68,15 @@ class TransformerCodecPipeline(Pipeline):
         mel_loss_list = [None] * 3
 
         for i in range(3):
-            mel_loss_list[i] = self.criteria(model_output_list[i], mel_input)
+            combined_input = torch.concat([mel_input, pitch, mag], dim=-1)
+            mel_loss_list[i] = self.criteria(model_output_list[i],  combined_input)
             self.val_loss[i] += mel_loss_list[i].item()
 
     def inference(self, source_path: str):
+
+        """
+        Why sould we reprocess the data?
+        """
         
         # get input
         y = self.source_y
@@ -114,9 +120,8 @@ class TransformerCodecPipeline(Pipeline):
         with torch.no_grad():
             for i in range(len(mel_segments)):
                 model_input = torch.tensor(mel_segments[i]).unsqueeze(0).to(self.device)
-
-                pitch_input = torch.tensor(pitch_segments[i]).unsqueeze(0).to(self.device)
-                mag_input = torch.tensor(mag_segments[i]).unsqueeze(0).to(self.device)
+                pitch_input = positional_encode(torch.Tensor(pitch_segments[i])).unsqueeze(0).to(self.device)
+                mag_input = positional_encode(torch.tensor(mag_segments[i])).unsqueeze(0).to(self.device)
                 
                 x1_quantized, x2_quantized, x3_quantized = model.encoder(model_input, pitch_input, mag_input)
                 bos = model.bos[:1]
@@ -126,7 +131,7 @@ class TransformerCodecPipeline(Pipeline):
                 x2_residual_input = bos.to(self.device)
 
                 for frame in range(x1_quantized.shape[1]):
-                    model_output_list = model.decoder(
+                    model_output = model.decoder(
                         combined_input=combined_input,
                         x1_quantize_residual_input=x1_residual_input,
                         x2_quantize_residual_input=x2_residual_input,
@@ -134,20 +139,20 @@ class TransformerCodecPipeline(Pipeline):
                         x2_quantized=x2_quantized,
                         x3_quantized=x3_quantized,
                     )
-                    
-                    model_output, decoded = model_output_list
-                    
-                    new_combined =  decoded[0]
-                    new_x1_res = decoded[1] - decoded[0]
-                    new_x2_res = decoded[2] - decoded[1]
+                                        
+                    new_combined =  model_output[0]
+                    new_x1_res = model_output[1] - model_output[0]
+                    new_x2_res = model_output[2] - model_output[1]
 
                     combined_input = torch.concat([combined_input, new_combined[:, -1:, :]], dim=1)
                     x1_residual_input = torch.concat([x1_residual_input, new_x1_res[:, -1:, :]], dim=1)
                     x2_residual_input = torch.concat([x2_residual_input, new_x2_res[:, -1:, :]], dim=1)
                 
-                waveform_output_vq1, _ = self.vocoder(model_output[0], output_all=True)
-                waveform_output_vq2, _ = self.vocoder(model_output[1], output_all=True)
-                waveform_output_vq3, _ = self.vocoder(model_output[2], output_all=True)
+                # TODO: remember, the output from the previous process is combined
+                waveform_output_vq1, _ = self.vocoder(model_output[0][:80], output_all=True)
+                waveform_output_vq2, _ = self.vocoder(model_output[1][:80], output_all=True)
+                waveform_output_vq3, _ = self.vocoder(model_output[2][:80], output_all=True)
+                
                 pred_list_vq1.append(waveform_output_vq1[0].cpu())
                 pred_list_vq2.append(waveform_output_vq2[0].cpu())
                 pred_list_vq3.append(waveform_output_vq3[0].cpu())
@@ -161,7 +166,7 @@ class TransformerCodecPipeline(Pipeline):
 
 if __name__ == '__main__':
 
-    data_root_dir = "/media/daniel0321/LargeFiles/datasets/VCTK/dataset"
+    # data_root_dir = "/media/daniel0321/LargeFiles/datasets/VCTK/dataset"
     pipeline_dir = "."
     trainset_path =  os.path.join("../../raw_data_sample", "train_spc.pkl")
     testset_path = os.path.join("../../raw_data_sample", "test_spc.pkl")
@@ -181,6 +186,6 @@ if __name__ == '__main__':
         batch_size=16,
     )
 
-    pipeline.test(test_dir="../../raw_data_sample/test/wav48_silence_trimmed")
+    pipeline.test(test_dir=testset_path)
 
     pipeline.generate(audio_path="../../raw_data_sample/test/wav48_silence_trimmed/p343/p343_004_mic1.flac", save_dir="performance")

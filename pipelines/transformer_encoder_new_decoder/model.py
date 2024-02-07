@@ -187,8 +187,12 @@ class CodecT(nn.Module):
         
         self.device = device
         self.heads = 4
+        
         self.input_dim = 80
-        self.latent_dim = 256
+        self.pitch_dim = 80 # use config['input_dim]
+        self.mag_dim = 80 # use config['input_dim']
+        
+        self.latent_dim = 256 # use config['latent_dim']
         self.combined_dim = self.latent_dim * 3
         self.frames = 80
         self.batch_size = 16
@@ -199,10 +203,6 @@ class CodecT(nn.Module):
         mask = (torch.triu(torch.ones(self.frames, self.frames)) == 1).transpose(0, 1).to(self.device)
         self.mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         
-        self.pitch_embed = nn.Linear(1, self.latent_dim)
-        self.mag_embed = nn.Linear(1, self.latent_dim)
-        self.positional_encoding = PositionalEncoding(self.latent_dim)
-
         self.encoder_linear = nn.Sequential(
                 nn.Conv1d(self.input_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -212,7 +212,7 @@ class CodecT(nn.Module):
             )
 
         self.pitch_encoder_linear = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.pitch_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -220,7 +220,7 @@ class CodecT(nn.Module):
             )
 
         self.mag_encoder_linear = nn.Sequential(
-                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.mag_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
                 nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
@@ -261,13 +261,13 @@ class CodecT(nn.Module):
 
         # project the vector to the original dim
         self.decoder_linear = nn.Sequential(
-                nn.Conv1d(self.combined_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.combined_dim, self.combined_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.combined_dim, self.combined_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
-                nn.Conv1d(self.latent_dim, self.latent_dim, 1, stride=1, padding=0, dilation=1),
+                nn.Conv1d(self.combined_dim, self.combined_dim, 1, stride=1, padding=0, dilation=1),
                 nn.LeakyReLU(),
-                nn.Conv1d(self.latent_dim, self.input_dim, 1, stride=1, padding=0, dilation=1)
+                nn.Conv1d(self.combined_dim, self.input_dim + self.mag_dim + self.pitch_dim, 1, stride=1, padding=0, dilation=1)
             )
     
     def right_shift(self, x: torch.Tensor):
@@ -276,21 +276,16 @@ class CodecT(nn.Module):
         return right_shifted
 
     
-    def encoder(self, x, pitch, mag):
+    def encoder(self, x):
         # transmit the compressed values (code book index of each input vector) to decoder
         # transmit the quantized tensor (decoded tensor) to the next level
 
         x = self.encoder_linear(x.transpose(1, 2)) # transpose the input into (bins, frames) and perform linear encoding
-        x = x.contiguous().transpose(1, 2) # transpose back into (frames, bins)
-
-        pitch = self.pitch_embed(pitch)
-        pitch = self.positional_encoding(pitch)
-        pitch = self.pitch_encoder_linear(pitch.transpose(1, 2))
-        pitch = pitch.contiguous().transpose(1, 2)
-
-        mag = self.mag_embed(mag)
-        mag = self.positional_encoding(mag)
         mag = self.mag_encoder_linear(mag.transpose(1, 2))
+        pitch = self.pitch_encoder_linear(pitch.transpose(1, 2))
+
+        x = x.contiguous().transpose(1, 2) # transpose back into (frames, bins)
+        pitch = pitch.contiguous().transpose(1, 2)
         mag = mag.contiguous().transpose(1, 2)
 
         combined = torch.concat([x, pitch, mag], dim=-1)
@@ -307,6 +302,7 @@ class CodecT(nn.Module):
         x3 = self.res_encoder_block3(x2_quantize_residual)
         x3_quantized, x3_indices, x3_commit_loss = self.vq3(x3) # shape (frames=80, feats=256)
 
+
         return x1_quantized, x2_quantized, x3_quantized
 
     def decoder(self, combined_input, x1_quantize_residual_input, x2_quantize_residual_input, x1_quantized, x2_quantized,  x3_quantized):
@@ -314,8 +310,8 @@ class CodecT(nn.Module):
         """
         Maybe we can try to output a combined vector without projecting the vector back to bins.
         The target of decoder would then turn back to simply reconstruct the input vector (in current
-        situation, we suppose decoder would reconstruct the vector, however, since the actual target for
-        decoder is to contruct a vector that could be projected back to original bins, the reconstruction
+        situation, we suppose decoder would reconstruct the vector during the process, however, since 
+        the actual target for decoder is to contruct a vector that could be projected back to original bins, the reconstruction
         might not be completed)
         
         In this case, the output of decoder could directly be the input for decoder. What we should also do
@@ -350,24 +346,26 @@ class CodecT(nn.Module):
         x3_decoded_output = self.decoder_linear(x3_decoded.transpose(1, 2))
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
-        return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_decoded, x2_decoded, x3_decoded)
+        return x1_decoded_output, x2_decoded_output, x3_decoded_output
 
     def forward(self, x: torch.Tensor, pitch: torch.Tensor, mag: torch.Tensor):
 
+        """
+        @input
+        x: The positional encoded tensor, shape([batch, frames, 256])
+        pitch: The positional encoded tensor, shape([batch, frames, 256])
+        mag: The positional encoded tensor, shape([batch, frames, 256])
 
-        # TODO: should probably right shift the decoder
+        @output
+        The combined vector
+        """
 
         x = self.encoder_linear(x.transpose(1, 2)) # transpose the input into (bins, frames) and perform linear encoding
-        x = x.contiguous().transpose(1, 2) # transpose back into (frames, bins)
-
-        pitch = self.pitch_embed(pitch)
-        pitch = self.positional_encoding(pitch)
-        pitch = self.pitch_encoder_linear(pitch.transpose(1, 2))
-        pitch = pitch.contiguous().transpose(1, 2)
-
-        mag = self.mag_embed(mag)
-        mag = self.positional_encoding(mag)
         mag = self.mag_encoder_linear(mag.transpose(1, 2))
+        pitch = self.pitch_encoder_linear(pitch.transpose(1, 2))
+
+        x = x.contiguous().transpose(1, 2) # transpose back into (frames, bins)
+        pitch = pitch.contiguous().transpose(1, 2)
         mag = mag.contiguous().transpose(1, 2)
 
         combined = torch.concat([x, pitch, mag], dim=-1)
@@ -407,4 +405,3 @@ class CodecT(nn.Module):
         x3_decoded_output = x3_decoded_output.contiguous().transpose(1, 2)
         
         return (x1_decoded_output, x2_decoded_output, x3_decoded_output), (x1_commit_loss, x2_commit_loss, x3_commit_loss)
-    
