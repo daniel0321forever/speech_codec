@@ -1,0 +1,12 @@
+-- reconstruct the combined vector as the target, so we can get the reconstructed vector as the decoder input in testing
+-- add the weight of loss2 and loss3
+-- use quantized pitch index as the pitch input, and do the positional encoding with it, to prevent enromous loss and to simulate the typical PE for word
+-- the input for decoder should the right shifted final output, so that we can use the output of decoder to do auto-regressive testing
+-- not working, if we want to use the output from last decoder to be the could be added to the encoder output, we csnoot use autoregressive method.
+    -> so let's not use modulize for now, or we might think of a better method
+
+Strongly recommended improvement
+-- apply positional encoding onto mel input, for that the transformer layer would not consider the arrangement of data
+-- use discriminator
+-- might try quantize the input and get the residual data first (without using neural network), THEN put them into the encoder. (not sure it would be better though)
+-- once the performance has been better then before, try use music dataset

@@ -1,2 +1,0 @@
--- reconstruct the combined vector as the target, so we can get the reconstructed vector as the decoder input in testing
--- add the weight of loss2 and loss3
